@@ -179,3 +179,30 @@ class AdaChargeProfitMax(AdaCharge):
         profit = scaled_revenue*cp.sum(rates) - energy_prices*cp.sum(rates, axis=0) - \
                  demand_charge*cp.maximum(schedule_peak, self.interface.get_prev_peak())
         return profit
+
+
+class AdaChargeLoadFlattening(AdaCharge):
+    def __init__(self, external_signal=None, const_type=SOC, energy_equality=True, solver=None, max_recomp=None,
+                 offline=False, events=None):
+        """
+
+        Args:
+            external_signal: np.ndarray of an external signal which we will attempt to flatten.
+                Should be at least as long as the simulation.
+            const_type: SOC or AFFINE
+            energy_equality: True of False
+            solver: any CVXPy solver
+            max_recomp: int
+        """
+        super().__init__(const_type, energy_equality, solver, max_recomp, offline, events)
+        self.external_signal = external_signal
+
+    def obj(self, rates, active_evs):
+        if self.external_signal is None:
+            return -cp.sum_squares(cp.sum(rates, axis=0))
+        else:
+            max_t = max(ev.departure for ev in active_evs) + 1
+            t = self.interface.current_time
+            voltage = self.interface.evse_voltage(active_evs[0].station_id)
+            return -cp.sum_squares(cp.sum(rates, axis=0) - self.external_signal[t: t + max_t] * 1000 / voltage)
+
