@@ -60,15 +60,16 @@ class AdaCharge(BaseAlgorithm):
 
     @staticmethod
     def _affine_infrastructure_constraints(rates, network_constraints, evse_indexes):
+        if network_constraints.constraint_matrix is None:
+            return []
         constraints = {}
-        trimmed_constraints = network_constraints.constraint_matrix[:,
-                              np.isin(network_constraints.evse_index, evse_indexes)]
+        trimmed_constraints = network_constraints.constraint_matrix[:, np.isin(network_constraints.evse_index, evse_indexes)]
         inactive_mask = ~np.all(trimmed_constraints == 0, axis=1)
         trimmed_constraints = trimmed_constraints[inactive_mask]
         trimmed_constraint_ids = np.array(network_constraints.constraint_index)[inactive_mask]
         for j in range(trimmed_constraints.shape[0]):
             v = np.abs(trimmed_constraints[j, :])
-            constraints[trimmed_constraint_ids[j]] = v * rates <= network_constraints.magnitudes[j]
+            constraints[str(trimmed_constraint_ids[j])] = v * rates <= network_constraints.magnitudes[inactive_mask][j]
         return constraints
 
     def _soc_infrastructure_constraints(self, rates, network_constraints, evse_indexes):
