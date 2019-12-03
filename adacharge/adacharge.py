@@ -3,9 +3,7 @@ from acnportal.algorithms import BaseAlgorithm
 import cvxpy as cp
 from copy import deepcopy
 
-
-AFFINE = 'AFFINE'
-SOC = 'SOC'
+from .cvx_utils import *
 
 
 class AdaCharge(BaseAlgorithm):
@@ -33,60 +31,6 @@ class AdaCharge(BaseAlgorithm):
         c = np.array([(max_t - t)/max_t for t in range(max_t)])
         return c*cp.sum(rates, axis=0) - (1e-6/max_t)*cp.sum_squares(rates)
 
-    def _rate_constraints(self, rates, active_evs, evse_indexes):
-        constraints = {}
-        rates_ub = np.zeros(rates.shape)
-        rates_lb = np.zeros(rates.shape)
-        for ev in active_evs:
-            i = evse_indexes.index(ev.station_id)
-            rates_ub[i, ev.arrival:ev.departure] = self.interface.max_pilot_signal(ev.station_id)
-        constraints['Rate Upper Bounds'] = rates <= rates_ub
-        constraints['Rate Lower Bounds'] = rates >= rates_lb
-        return constraints
-
-    def _energy_constraints(self, rates, active_evs, evse_indexes):
-        constraints = {}
-        for ev in active_evs:
-            # Constraint on the energy delivered to each EV
-            i = evse_indexes.index(ev.station_id)
-            e = cp.Parameter(nonneg=True, name='{0}_energy_request'.format(ev.session_id))
-            e.value = self.interface.remaining_amp_periods(ev)
-            constraint_id = 'Energy Constraint {0}'.format(ev.session_id)
-            if self.energy_equality:
-                constraints[constraint_id] = cp.sum(rates[i, ev.arrival:ev.departure]) == e
-            else:
-                constraints[constraint_id] = cp.sum(rates[i, ev.arrival:ev.departure]) <= e
-        return constraints
-
-    @staticmethod
-    def _affine_infrastructure_constraints(rates, network_constraints, evse_indexes):
-        if network_constraints.constraint_matrix is None:
-            return []
-        constraints = {}
-        trimmed_constraints = network_constraints.constraint_matrix[:, np.isin(network_constraints.evse_index, evse_indexes)]
-        inactive_mask = ~np.all(trimmed_constraints == 0, axis=1)
-        trimmed_constraints = trimmed_constraints[inactive_mask]
-        trimmed_constraint_ids = np.array(network_constraints.constraint_index)[inactive_mask]
-        for j in range(trimmed_constraints.shape[0]):
-            v = np.abs(trimmed_constraints[j, :])
-            constraints[str(trimmed_constraint_ids[j])] = v * rates <= network_constraints.magnitudes[inactive_mask][j]
-        return constraints
-
-    def _soc_infrastructure_constraints(self, rates, network_constraints, evse_indexes):
-        if network_constraints.constraint_matrix is None:
-            return []
-        constraints = {}
-        trimmed_constraints = network_constraints.constraint_matrix[:, np.isin(network_constraints.evse_index, evse_indexes)]
-        inactive_mask = ~np.all(trimmed_constraints == 0, axis=1)
-        trimmed_constraints = trimmed_constraints[inactive_mask]
-        trimmed_constraint_ids = np.array(network_constraints.constraint_index)[inactive_mask]
-        phase_vector = np.array([np.deg2rad(self.interface.evse_phase(evse_id)) for evse_id in evse_indexes])
-
-        for j in range(trimmed_constraints.shape[0]):
-            v = np.stack([trimmed_constraints[j, :] * np.cos(phase_vector), trimmed_constraints[j, :] * np.sin(phase_vector)])
-            constraints[str(trimmed_constraint_ids[j])] = cp.norm(v * rates, axis=0) <= network_constraints.magnitudes[inactive_mask][j]
-        return constraints
-
     def _build_problem(self, active_evs, offset_time):
         if len(active_evs) == 0:
             return {}
@@ -101,26 +45,23 @@ class AdaCharge(BaseAlgorithm):
 
         rates = cp.Variable((len(evse_indexes), max_t), name='rates')
         constraints = {}
-        constraints.update(self._rate_constraints(rates, active_evs, evse_indexes))
-        constraints.update(self._energy_constraints(rates, active_evs, evse_indexes))
+        max_rates = {ev.session_id: self.interface.max_pilot_signal(ev.station_id) for ev in active_evs}
+        constraints.update(rate_constraints(rates, active_evs, evse_indexes, max_rates))
 
-        if self.const_type == AFFINE:
-            constraints.update(self._affine_infrastructure_constraints(rates, network_constraints, evse_indexes))
-        elif self.const_type == SOC:
-            constraints.update(self._soc_infrastructure_constraints(rates, network_constraints, evse_indexes))
+        remaining_demands = {ev.session_id: self.interface.remaining_amp_periods(ev) for ev in active_evs}
+        constraints.update(energy_constraints(rates, active_evs, evse_indexes, remaining_demands, self.energy_equality))
+
+        phases = {evse_id: self.interface.evse_phase(evse_id) for evse_id in evse_indexes}
+        constraints.update(infrastructure_constraints(rates, network_constraints, evse_indexes, self.const_type, phases))
 
         objective = cp.Maximize(self.obj(rates, active_evs))
-        return cp.Problem(objective, list(constraints.values())), constraints
+        return cp.Problem(objective, list(constraints.values())), constraints, rates
 
     def _solve(self, active_evs, offset_time, verbose=False, solver=None):
-        prob, constraints = self._build_problem(active_evs, offset_time)
+        prob, constraints, rates = self._build_problem(active_evs, offset_time)
         _ = prob.solve(verbose=verbose, solver=solver)
         if prob.status in ["infeasible", "unbounded"]:
             raise ValueError('Problem Infeasible.')
-
-        rates = next((x for x in prob.variables() if x.name() == 'rates'), None)
-        if rates is None:
-            raise ValueError('Rates variable not found.')
 
         active_evses = set(ev.station_id for ev in active_evs)
         network_constraints = self.interface.get_constraints()
