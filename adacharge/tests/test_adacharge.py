@@ -8,7 +8,7 @@ import pytz
 from datetime import datetime
 import cvxpy as cp
 from acnportal import acnsim
-from AdaCharge import adacharge
+from adacharge.adacharge import *
 
 
 class TestAdaCharge(TestCase):
