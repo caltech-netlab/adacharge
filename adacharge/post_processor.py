@@ -13,7 +13,7 @@ class AdaChargePostProcessor:
         self.const_type = const_type
         self.solver = solver
         self.eta = eta
-        self.integer_program = False
+        self.integer_program = integer_program
 
     def obj(self, rates, target, eta):
         return -cp.sum_squares(cp.sum(rates) - np.sum(target)) - eta*cp.sum_squares(rates - target)
@@ -25,7 +25,7 @@ class AdaChargePostProcessor:
         else:
             return max(J1772_MIN, min(x for x in allowable_rates if x > 0))
 
-    def process(self, target, active_evs, verbose=False, solver=None):
+    def process(self, target, active_evs):
         if len(active_evs) == 0:
             return {}
         network_constraints = self.interface.get_constraints()
@@ -53,7 +53,7 @@ class AdaChargePostProcessor:
         objective = cp.Maximize(self.obj(rates, target_vector, self.eta))
         prob = cp.Problem(objective, list(constraints.values()))
 
-        _ = prob.solve(verbose=verbose, solver=solver)
+        _ = prob.solve(solver=self.solver)
         if prob.status in ["infeasible", "unbounded"]:
             raise ValueError('Problem Infeasible.')
 
