@@ -108,3 +108,49 @@ class TestAdaCharge(TestCase):
                 self.assertGreaterEqual(s, 8)
         self.assertTrue(iface.is_feasible(new_schedule))
 
+    def test_CC_8_A_increments(self):
+        timezone = pytz.timezone('America/Los_Angeles')
+        start = timezone.localize(datetime(2018, 9, 1))
+        period = 5  # minute
+        events = acnsim.EventQueue()
+        events.add_event(acnsim.RecomputeEvent(1))  # ACNSim currently throws an error when their are no events
+        cn = acnsim.sites.auto_acn.simple_acn(['PS-{0}'.format(x) for x in range(10)], evse_type=acnsim.CC,
+                                              aggregate_cap=30)
+        self.sim = acnsim.Simulator(cn, algorithms.UncontrolledCharging(), events,
+                                    start, period=period, verbose=False)
+        self.active_evs = [acnsim.EV(0, 10, 15, 'PS-{0}'.format(x), '{0}'.format(x),
+                                     acnsim.Battery(50, 0, 6.6)) for x in range(3)]
+
+        iface = acnsim.Interface(self.sim)
+        input_rates = [25, 12, 32]
+        output_rates = [24, 8, 32]
+        float_schedule = {'PS-{0}'.format(x): [input_rates[x]] for x in range(3)}
+        pp = AdaChargePostProcessor(iface)
+        new_schedule = pp.process(float_schedule, self.active_evs)
+        expected_rates = {'PS-{0}'.format(x): [output_rates[x]] for x in range(3)}
+        self.assertDictEqual(new_schedule, expected_rates)
+        self.assertTrue(iface.is_feasible(new_schedule))
+        
+    def test_CC_8_A_increments_integer(self):
+        timezone = pytz.timezone('America/Los_Angeles')
+        start = timezone.localize(datetime(2018, 9, 1))
+        period = 5  # minute
+        events = acnsim.EventQueue()
+        events.add_event(acnsim.RecomputeEvent(1))  # ACNSim currently throws an error when their are no events
+        cn = acnsim.sites.auto_acn.simple_acn(['PS-{0}'.format(x) for x in range(10)], evse_type=acnsim.CC,
+                                              aggregate_cap=30)
+        self.sim = acnsim.Simulator(cn, algorithms.UncontrolledCharging(), events,
+                                    start, period=period, verbose=False)
+        self.active_evs = [acnsim.EV(0, 10, 15, 'PS-{0}'.format(x), '{0}'.format(x),
+                                     acnsim.Battery(50, 0, 6.6)) for x in range(3)]
+
+        iface = acnsim.Interface(self.sim)
+        input_rates = [25, 12, 32]
+        output_rates = [24, 8, 32]
+        float_schedule = {'PS-{0}'.format(x): [input_rates[x]] for x in range(3)}
+        pp = AdaChargePostProcessor(iface, integer_program=True)
+        new_schedule = pp.process(float_schedule, self.active_evs)
+        expected_rates = {'PS-{0}'.format(x): [output_rates[x]] for x in range(3)}
+        self.assertDictEqual(new_schedule, expected_rates)
+        self.assertTrue(iface.is_feasible(new_schedule))
+

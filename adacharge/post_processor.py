@@ -7,6 +7,11 @@ from acnportal import acnsim
 
 J1772_MIN = 6
 
+
+def project_into_set(x, allowable_set, eps=0.1):
+    return [s for s in sorted(allowable_set) if s <= x + eps][-1]
+
+
 class AdaChargePostProcessor:
     def __init__(self, interface, const_type=SOC, solver=None, eta=1e-5, integer_program=False):
         self.interface = interface
@@ -36,14 +41,15 @@ class AdaChargePostProcessor:
         rates = cp.Variable(target_vector.shape, name='rates', integer=self.integer_program)
         constraints = {}
 
-        max_rates = {ev.session_id: min([self.interface.max_pilot_signal(ev.station_id),
-                                         self.interface.remaining_amp_periods(ev)]) for ev in active_evs}
         rates_ub = np.zeros(rates.shape)
         rates_lb = np.zeros(rates.shape)
         for ev in active_evs:
             i = evse_indexes.index(ev.station_id)
-            rates_ub[i] = max_rates[ev.session_id]
             rates_lb[i] = self._min_allowable_rate(ev)
+            rates_ub[i] = min([ self.interface.max_pilot_signal(ev.station_id),
+                                self.interface.remaining_amp_periods(ev)])
+            rates_ub[i] = max(rates_ub[i], rates_lb[i])  # upper bound should never be less than the lower bound
+
         constraints['Rate Upper Bounds'] = rates <= rates_ub
         constraints['Rate Lower Bounds'] = rates >= rates_lb
 
@@ -60,8 +66,13 @@ class AdaChargePostProcessor:
         active_evses = set(ev.station_id for ev in active_evs)
         network_constraints = self.interface.get_constraints()
         evse_indexes = [evse_id for evse_id in network_constraints.evse_index if evse_id in active_evses]
-        return {evse_id: [int(np.clip(rates[j].value,
-                                 a_min=rates_lb[j],
-                                 a_max=rates_ub[j]))]
-                          for j, evse_id in enumerate(evse_indexes)}
 
+        schedule = {}
+        for j, evse_id in enumerate(evse_indexes):
+            # Numerical issues can push the rate outside its allowable range, clip to feasible region
+            r = np.clip(rates[j].value, a_min=rates_lb[j], a_max=rates_ub[j])
+            continuous, allowable_rates = self.interface.allowable_pilot_signals(evse_id)
+            if not continuous:
+                r = project_into_set(r, allowable_rates)
+            schedule[evse_id] = [r]
+        return schedule
