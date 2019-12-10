@@ -34,10 +34,11 @@ def total_energy(rates, active_evs, interface):
 
 def demand_charge(rates, active_evs, interface):
     schedule_peak = cp.max(cp.sum(rates, axis=0))
+    voltage = interface.evse_voltage(active_evs[0].station_id)
     return -interface.get_demand_charge()*cp.maximum(schedule_peak, interface.get_prev_peak()) * voltage / 1000
 
 
-def min_variance(rates, active_evs, interface, external_signal=None):
+def load_flattening(rates, active_evs, interface, external_signal=None):
     if external_signal is None:
         return -cp.sum_squares(cp.sum(rates, axis=0))
     else:
