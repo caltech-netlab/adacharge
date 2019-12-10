@@ -6,9 +6,13 @@ from copy import deepcopy
 from .cvx_utils import *
 
 
-class AdaCharge(BaseAlgorithm):
-    def __init__(self, const_type=SOC, energy_equality=False, solver=None, max_recomp=None, offline=False, events=None):
+class AdaChargeBase(BaseAlgorithm):
+    def __init__(self, obj_config, const_type=SOC, energy_equality=False, solver=None, max_recomp=None, offline=False, events=None,
+                 post_processing=False):
         super().__init__()
+        self.obj_config = obj_config
+        if len(self.obj_config) < 1:
+            raise ValueError('Please supply a non-empty obj_config.')
         self.offline = offline
         self.evs = []
         self.internal_schedule = None
@@ -25,11 +29,10 @@ class AdaCharge(BaseAlgorithm):
         self.const_type = const_type
         self.energy_equality = energy_equality
         self.solver = solver
+        self.post_processing = post_processing
 
     def obj(self, rates, active_evs):
-        max_t = max(ev.departure for ev in active_evs) + 1
-        c = np.array([(max_t - t)/max_t for t in range(max_t)])
-        return c*cp.sum(rates, axis=0) - (1e-6/max_t)*cp.sum_squares(rates)
+        return sum(x[0]*x[1](rates, active_evs, self.interface) if len(x) == 2 else x[0]*x[1](rates, active_evs, **x[2]) for x in self.obj_config)
 
     def _build_problem(self, active_evs, offset_time):
         if len(active_evs) == 0:
@@ -59,7 +62,11 @@ class AdaCharge(BaseAlgorithm):
 
     def _solve(self, active_evs, offset_time, verbose=False, solver=None):
         prob, constraints, rates = self._build_problem(active_evs, offset_time)
-        _ = prob.solve(verbose=verbose, solver=solver)
+        try:
+            _ = prob.solve(verbose=verbose, solver=solver)
+        except:
+            _ = prob.solve(verbose=verbose, solver=cp.SCS)
+
         if prob.status in ["infeasible", "unbounded"]:
             raise ValueError('Problem Infeasible.')
 
@@ -84,9 +91,19 @@ class AdaCharge(BaseAlgorithm):
                 return self._solve(active_evs, t, solver=self.solver)
 
 
-class AdaChargeProfitMax(AdaCharge):
-    def __init__(self, revenue, const_type=SOC, energy_equality=False, solver=None, max_recomp=None, get_dc=None,
-                 offline=False, events=None):
+class AdaCharge(AdaChargeBase):
+    def __init__(self, const_type=SOC, energy_equality=False, solver=None, max_recomp=None, offline=False, events=None,
+                 post_processing=False, regularizers=None):
+        obj_config = [(1, quick_charge), (1e-6, equal_share)]
+        if regularizers is not None:
+            obj_config.extend(regularizers)
+        super().__init__(obj_config,
+                         const_type, energy_equality, solver, max_recomp, offline, events, post_processing)
+
+
+class AdaChargeProfitMax(AdaChargeBase):
+    def __init__(self, revenue, const_type=SOC, energy_equality=False, solver=None, max_recomp=None, offline=False, events=None,
+                 post_processing=False, get_dc=None, regularizers=None):
         """
 
         Args:
@@ -97,30 +114,34 @@ class AdaChargeProfitMax(AdaCharge):
             max_recomp: int
             get_dc: function to get the demand charge proxy
         """
-        super().__init__(const_type, energy_equality, solver, max_recomp, offline, events)
-        self.revenue = revenue
-        if get_dc is not None:
-            self.get_demand_charge = get_dc
-
-    @staticmethod
-    def get_demand_charge(iface):
-        return iface.get_demand_charge()
-
-    def obj(self, rates, active_evs):
-        # TODO(zach): Should account for EVSEs with different voltages
-        # We implicitly assume that energy_prices, scaled_revenue, and demand_charge should be scaled by voltage/1000.
-        max_t = max(ev.departure for ev in active_evs) + 1
-        voltage = self.interface.evse_voltage(active_evs[0].station_id)
-
-        energy_prices = np.array(self.interface.get_prices(max_t)) * (self.interface.period / 60) * voltage / 1000
-
-        scaled_revenue = self.revenue * (self.interface.period / 60) * voltage / 1000
-
-        demand_charge = self.get_demand_charge(self.interface) * voltage / 1000
-        schedule_peak = cp.max(cp.sum(rates, axis=0))
-        profit = scaled_revenue*cp.sum(rates) - energy_prices*cp.sum(rates, axis=0) - \
-                 demand_charge*cp.maximum(schedule_peak, self.interface.get_prev_peak())
-        return profit
+        obj_config = [(revenue, quick_charge), (1, energy_cost)]
+        if get_dc is None:
+            obj_config.append((1, get_dc))
+        else:
+            obj_config.append((1, demand_charge))
+        if regularizers is not None:
+            obj_config.extend(regularizers)
+        super().__init__(obj_config, const_type, energy_equality, solver, max_recomp, offline, events, post_processing)
+    #
+    # @staticmethod
+    # def get_demand_charge(iface):
+    #     return iface.get_demand_charge()
+    #
+    # def obj(self, rates, active_evs):
+    #     # TODO(zach): Should account for EVSEs with different voltages
+    #     # We implicitly assume that energy_prices, scaled_revenue, and demand_charge should be scaled by voltage/1000.
+    #     max_t = max(ev.departure for ev in active_evs) + 1
+    #     voltage = self.interface.evse_voltage(active_evs[0].station_id)
+    #
+    #     energy_prices = np.array(self.interface.get_prices(max_t)) * (self.interface.period / 60) * voltage / 1000
+    #
+    #     scaled_revenue = self.revenue * (self.interface.period / 60) * voltage / 1000
+    #
+    #     demand_charge = self.get_demand_charge(self.interface) * voltage / 1000
+    #     schedule_peak = cp.max(cp.sum(rates, axis=0))
+    #     profit = scaled_revenue*cp.sum(rates) - energy_prices*cp.sum(rates, axis=0) - \
+    #              demand_charge*cp.maximum(schedule_peak, self.interface.get_prev_peak())
+    #     return profit
 
 
 class AdaChargeLoadFlattening(AdaCharge):

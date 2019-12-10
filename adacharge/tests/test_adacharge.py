@@ -8,7 +8,7 @@ import pytz
 from datetime import datetime
 import cvxpy as cp
 from acnportal import acnsim
-from adacharge.adacharge import *
+from adacharge import AdaCharge, AdaChargeProfitMax, AdaChargeLoadFlattening
 
 
 class TestAdaCharge(TestCase):
@@ -103,20 +103,20 @@ class TestAdaChargeOffline(TestCase):
         np.testing.assert_allclose(sum(sum(v) for v in alg.internal_schedule.values()), sim.charging_rates.sum(), rtol=1e-04)
 
 
-class TestAdaChargeProfitMax(TestCase):
-    def test_default_get_demand_charge(self):
-        ada = AdaChargeProfitMax(0.4)
-        iface = create_autospec(Interface)
-        iface.get_demand_charge.return_value = 15.51
-        self.assertEqual(ada.get_demand_charge(iface), 15.51)
-
-    def test_custom_get_demand_charge(self):
-        def custom_demand_charge_proxy(i):
-            return 14.0
-        ada = AdaChargeProfitMax(0.4, get_dc=custom_demand_charge_proxy)
-        iface = create_autospec(Interface)
-        iface.get_demand_charge.return_value = 15.51
-        self.assertEqual(ada.get_demand_charge(iface), 14.0)
+# class TestAdaChargeProfitMax(TestCase):
+#     def test_default_get_demand_charge(self):
+#         ada = AdaChargeProfitMax(0.4)
+#         iface = create_autospec(Interface)
+#         iface.get_demand_charge.return_value = 15.51
+#         self.assertEqual(ada.get_demand_charge(iface), 15.51)
+#
+#     def test_custom_get_demand_charge(self):
+#         def custom_demand_charge_proxy(i):
+#             return 14.0
+#         ada = AdaChargeProfitMax(0.4, get_dc=custom_demand_charge_proxy)
+#         iface = create_autospec(Interface)
+#         iface.get_demand_charge.return_value = 15.51
+#         self.assertEqual(ada.get_demand_charge(iface), 14.0)
 
     # def test_obj_default_demand_charge(self):
     #     active_evs = []

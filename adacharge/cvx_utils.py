@@ -5,6 +5,49 @@ SOC = 'SOC'
 AFFINE = 'AFFINE'
 
 
+# Objectives
+def quick_charge(rates, active_evs, interface):
+    max_t = max(ev.departure for ev in active_evs) + 1
+    c = np.array([(max_t - t) / max_t for t in range(max_t)])
+    return c * cp.sum(rates, axis=0)
+
+
+def equal_share(rates, active_evs, interface):
+    return -cp.sum_squares(rates)
+
+
+def energy_cost(rates, active_evs, interface):
+        # TODO(zach): Should account for EVSEs with different voltages
+        # We implicitly assume that energy_prices, scaled_revenue, and demand_charge should be scaled by voltage/1000.
+        max_t = max(ev.departure for ev in active_evs) + 1
+        voltage = interface.evse_voltage(active_evs[0].station_id)
+        energy_prices = np.array(interface.get_prices(max_t)) * (interface.period / 60) * voltage / 1000
+        return -energy_prices*cp.sum(rates, axis=0)
+
+
+def total_energy(rates, active_evs, interface):
+    # TODO(zach): Should account for EVSEs with different voltages
+    # We implicitly assume that energy_prices, scaled_revenue, and demand_charge should be scaled by voltage/1000.
+    voltage = interface.evse_voltage(active_evs[0].station_id)
+    return cp.sum(rates) * (interface.period / 60) * voltage / 1000
+
+
+def demand_charge(rates, active_evs, interface):
+    schedule_peak = cp.max(cp.sum(rates, axis=0))
+    return -interface.get_demand_charge()*cp.maximum(schedule_peak, interface.get_prev_peak()) * voltage / 1000
+
+
+def min_variance(rates, active_evs, interface, external_signal=None):
+    if external_signal is None:
+        return -cp.sum_squares(cp.sum(rates, axis=0))
+    else:
+        max_t = max(ev.departure for ev in active_evs) + 1
+        t = interface.current_time
+        voltage = interface.evse_voltage(active_evs[0].station_id)
+        return -cp.sum_squares(cp.sum(rates, axis=0) - external_signal[t: t + max_t] * 1000 / voltage)
+
+
+# Constraints
 def rate_constraints(rates, active_evs, evse_indexes, max_pilots, min_pilots=None):
     constraints = {}
     rates_ub = np.zeros(rates.shape)
