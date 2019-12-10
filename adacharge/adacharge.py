@@ -35,6 +35,19 @@ class AdaChargeBase(BaseAlgorithm):
         return sum(x[0]*x[1](rates, active_evs, self.interface) if len(x) == 2 else
                    x[0]*x[1](rates, active_evs, self.interface, **x[2]) for x in self.obj_config)
 
+    def individual_rate_constraints(self, rates, active_evs, evse_indexes):
+        max_rates = {ev.session_id: self.interface.max_pilot_signal(ev.station_id) for ev in active_evs}
+        return rate_constraints(rates, active_evs, evse_indexes, max_rates)
+
+    def energy_delivered_constraints(self, rates, active_evs, evse_indexes):
+        remaining_demands = {ev.session_id: self.interface.remaining_amp_periods(ev) for ev in active_evs}
+        return energy_constraints(rates, active_evs, evse_indexes, remaining_demands, self.energy_equality)
+
+    def infrastructure_constraints(self, rates, evse_indexes):
+        network_constraints = self.interface.get_constraints()
+        phases = {evse_id: self.interface.evse_phase(evse_id) for evse_id in evse_indexes}
+        return infrastructure_constraints(rates, network_constraints, evse_indexes, self.const_type, phases)
+
     def _build_problem(self, active_evs, offset_time):
         if len(active_evs) == 0:
             return {}
@@ -49,14 +62,9 @@ class AdaChargeBase(BaseAlgorithm):
 
         rates = cp.Variable((len(evse_indexes), max_t), name='rates')
         constraints = {}
-        max_rates = {ev.session_id: self.interface.max_pilot_signal(ev.station_id) for ev in active_evs}
-        constraints.update(rate_constraints(rates, active_evs, evse_indexes, max_rates))
-
-        remaining_demands = {ev.session_id: self.interface.remaining_amp_periods(ev) for ev in active_evs}
-        constraints.update(energy_constraints(rates, active_evs, evse_indexes, remaining_demands, self.energy_equality))
-
-        phases = {evse_id: self.interface.evse_phase(evse_id) for evse_id in evse_indexes}
-        constraints.update(infrastructure_constraints(rates, network_constraints, evse_indexes, self.const_type, phases))
+        constraints.update(self.individual_rate_constraints(rates, active_evs, evse_indexes))
+        constraints.update(self.energy_delivered_constraints(rates, active_evs, evse_indexes))
+        constraints.update(self.infrastructure_constraints(rates, evse_indexes))
 
         objective = cp.Maximize(self.obj(rates, active_evs))
         return cp.Problem(objective, list(constraints.values())), constraints, rates
