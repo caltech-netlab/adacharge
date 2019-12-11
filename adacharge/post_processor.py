@@ -25,10 +25,7 @@ class AdaChargePostProcessor:
 
     def _min_allowable_rate(self, ev):
         continuous, allowable_rates = self.interface.allowable_pilot_signals(ev.station_id)
-        if continuous:
-            return J1772_MIN
-        else:
-            return max(J1772_MIN, min(x for x in allowable_rates if x > 0))
+        return allowable_rates[0] if continuous else allowable_rates[1]
 
     def process(self, target, active_evs):
         if len(active_evs) == 0:
