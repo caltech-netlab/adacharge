@@ -21,7 +21,8 @@ class AdaChargePostProcessor:
         self.integer_program = integer_program
 
     def obj(self, rates, target, eta):
-        return -cp.sum_squares(cp.sum(rates) - np.sum(target)) - eta*cp.sum_squares(rates - target)
+        return -cp.square(cp.sum(rates) - np.sum(target)) - eta*cp.sum_squares(rates - target)
+        # return -cp.sum_squares(rates - target)
 
     def _min_allowable_rate(self, ev):
         continuous, allowable_rates = self.interface.allowable_pilot_signals(ev.station_id)
