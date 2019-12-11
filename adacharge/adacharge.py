@@ -4,6 +4,7 @@ import cvxpy as cp
 from copy import deepcopy
 
 from .cvx_utils import *
+from .post_processor import project_into_set
 
 
 class AdaChargeBase(BaseAlgorithm):
@@ -86,9 +87,14 @@ class AdaChargeBase(BaseAlgorithm):
         active_evses = set(ev.station_id for ev in active_evs)
         network_constraints = self.interface.get_constraints()
         evse_indexes = [evse_id for evse_id in network_constraints.evse_index if evse_id in active_evses]
-        return {evse_id: np.clip(rates[j, :].value,
-                                 a_min=self.interface.min_pilot_signal(evse_id),
-                                 a_max=self.interface.max_pilot_signal(evse_id)) for j, evse_id in enumerate(evse_indexes)}
+        schedule = {}
+        for j, evse_id in enumerate(evse_indexes):
+            continuous, allowable_rates = self.interface.allowable_pilot_signals(evse_id)
+            if continuous:
+                schedule[evse_id] = np.clip(rates[j, :].value, a_min=self.interface.min_pilot_signal(evse_id),
+                                            a_max=self.interface.max_pilot_signal(evse_id))
+            else:
+                schedule[evse_id] = [project_into_set(x, allowable_rates) for x in rates[j, :]]
 
     def schedule(self, active_evs):
         if self.offline:
