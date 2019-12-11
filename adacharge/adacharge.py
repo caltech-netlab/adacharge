@@ -94,7 +94,8 @@ class AdaChargeBase(BaseAlgorithm):
                 schedule[evse_id] = np.clip(rates[j, :].value, a_min=self.interface.min_pilot_signal(evse_id),
                                             a_max=self.interface.max_pilot_signal(evse_id))
             else:
-                schedule[evse_id] = [project_into_set(x, allowable_rates) for x in rates[j, :]]
+                schedule[evse_id] = [project_into_set(x, allowable_rates) for x in rates[j, :].value]
+        return schedule
 
     def schedule(self, active_evs):
         if self.offline:
@@ -116,15 +117,16 @@ class AdaChargeBase(BaseAlgorithm):
 
 
 def adacharge_qc(const_type=SOC, energy_equality=False, solver=None, max_recomp=None, offline=False, events=None,
-                 post_processor=None, regularizers=None, base=AdaChargeBase):
+                 post_processor=None, regularizers=None, rampdown=None, base=AdaChargeBase):
     obj_config = [(1, quick_charge), (1e-6, equal_share)]
     if regularizers is not None:
         obj_config.extend(regularizers)
-    return base(obj_config, const_type, energy_equality, solver, max_recomp, offline, events, post_processor)
+    return base(obj_config, const_type, energy_equality, solver, max_recomp, offline, events, post_processor, rampdown)
 
 
 def adacharge_profit_max(revenue, const_type=SOC, energy_equality=False, solver=None, max_recomp=None, offline=False,
-                         events=None, post_processor=None, regularizers=None, get_dc=None, base=AdaChargeBase):
+                         events=None, post_processor=None, regularizers=None, get_dc=None, rampdown=None,
+                         base=AdaChargeBase):
     """
 
     Args:
@@ -142,11 +144,12 @@ def adacharge_profit_max(revenue, const_type=SOC, energy_equality=False, solver=
         obj_config.append((1, demand_charge))
     if regularizers is not None:
         obj_config.extend(regularizers)
-    return base(obj_config, const_type, energy_equality, solver, max_recomp, offline, events, post_processor)
+    return base(obj_config, const_type, energy_equality, solver, max_recomp, offline, events, post_processor, rampdown)
 
 
 def adacharge_load_flattening(external_signal=None, const_type=SOC, energy_equality=True, solver=None, max_recomp=None,
-                              offline=False, events=None, post_processor=None, regularizers=None, base=AdaChargeBase):
+                              offline=False, events=None, post_processor=None, regularizers=None, rampdown=None,
+                              base=AdaChargeBase):
     """
 
     Args:
@@ -160,7 +163,7 @@ def adacharge_load_flattening(external_signal=None, const_type=SOC, energy_equal
     obj_config = [(1, load_flattening, {'external_signal': external_signal})]
     if regularizers is not None:
         obj_config.extend(regularizers)
-    return base(obj_config, const_type, energy_equality, solver, max_recomp, offline, events, post_processor)
+    return base(obj_config, const_type, energy_equality, solver, max_recomp, offline, events, post_processor, rampdown)
 
 
 # Aliases to not break existing code.

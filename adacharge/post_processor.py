@@ -1,9 +1,4 @@
-import numpy as np
-from adacharge import AdaCharge, SOC, AFFINE
-import cvxpy as cp
-from copy import deepcopy
 from .cvx_utils import *
-from acnportal import acnsim
 
 J1772_MIN = 6
 
@@ -24,9 +19,19 @@ class AdaChargePostProcessor:
         return -cp.square(cp.sum(rates) - np.sum(target)) - eta*cp.sum_squares(rates - target)
         # return -cp.sum_squares(rates - target)
 
-    def _min_allowable_rate(self, ev):
-        continuous, allowable_rates = self.interface.allowable_pilot_signals(ev.station_id)
-        return allowable_rates[0] if continuous else allowable_rates[1]
+    # def _min_allowable_rate(self, ev):
+    #     continuous, allowable_rates = self.interface.allowable_pilot_signals(ev.station_id)
+    #     return allowable_rates[0] if continuous else allowable_rates[1]
+
+    def feasible_min_rates(self, active_evs, target):
+        ev_queue = [ev for ev in sorted(active_evs, key=lambda x: target[x.station_id], reverse=True)]
+        schedule = {ev.station_id: [0] for ev in active_evs}
+        for ev in ev_queue:
+            continuous, allowable_rates = self.interface.allowable_pilot_signals(ev.station_id)
+            schedule[ev.station_id][0] = allowable_rates[0] if continuous else allowable_rates[1]
+            if not self.interface.is_feasible(schedule):
+                schedule[ev.station_id][0] = 0
+        return {key: v[0] for key, v in schedule.items()}
 
     def process(self, target, active_evs):
         if len(active_evs) == 0:
@@ -39,11 +44,12 @@ class AdaChargePostProcessor:
         rates = cp.Variable(target_vector.shape, name='rates', integer=self.integer_program)
         constraints = {}
 
+        feasible_min = self.feasible_min_rates(active_evs, target)
         rates_ub = np.zeros(rates.shape)
         rates_lb = np.zeros(rates.shape)
         for ev in active_evs:
             i = evse_indexes.index(ev.station_id)
-            rates_lb[i] = self._min_allowable_rate(ev)
+            rates_lb[i] = feasible_min[ev.station_id]
             rates_ub[i] = min([ self.interface.max_pilot_signal(ev.station_id),
                                 self.interface.remaining_amp_periods(ev)])
             rates_ub[i] = max(rates_ub[i], rates_lb[i])  # upper bound should never be less than the lower bound
