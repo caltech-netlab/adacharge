@@ -104,53 +104,53 @@ class AdaChargeBase(BaseAlgorithm):
                     return intermediate_schedule
 
 
-class AdaCharge(AdaChargeBase):
-    def __init__(self, const_type=SOC, energy_equality=False, solver=None, max_recomp=None, offline=False, events=None,
-                 post_processor=None, regularizers=None):
-        obj_config = [(1, quick_charge), (1e-6, equal_share)]
-        if regularizers is not None:
-            obj_config.extend(regularizers)
-        super().__init__(obj_config,
-                         const_type, energy_equality, solver, max_recomp, offline, events, post_processor)
+def adacharge_qc(const_type=SOC, energy_equality=False, solver=None, max_recomp=None, offline=False, events=None,
+                 post_processor=None, regularizers=None, base=AdaChargeBase):
+    obj_config = [(1, quick_charge), (1e-6, equal_share)]
+    if regularizers is not None:
+        obj_config.extend(regularizers)
+    return base(obj_config, const_type, energy_equality, solver, max_recomp, offline, events, post_processor)
 
 
-class AdaChargeProfitMax(AdaChargeBase):
-    def __init__(self, revenue, const_type=SOC, energy_equality=False, solver=None, max_recomp=None, offline=False, events=None,
-                 post_processor=None, get_dc=None, regularizers=None):
-        """
+def adacharge_profit_max(revenue, const_type=SOC, energy_equality=False, solver=None, max_recomp=None, offline=False,
+                         events=None, post_processor=None, regularizers=None, get_dc=None, base=AdaChargeBase):
+    """
 
-        Args:
-            revenue: $/kWh
-            const_type: SOC or AFFINE
-            energy_equality: True of False
-            solver: any CVXPy solver
-            max_recomp: int
-            get_dc: function to get the demand charge proxy
-        """
-        obj_config = [(revenue, quick_charge), (1, energy_cost)]
-        if get_dc is not None:
-            obj_config.append((1, get_dc))
-        else:
-            obj_config.append((1, demand_charge))
-        if regularizers is not None:
-            obj_config.extend(regularizers)
-        super().__init__(obj_config, const_type, energy_equality, solver, max_recomp, offline, events, post_processor)
+    Args:
+        revenue: $/kWh
+        const_type: SOC or AFFINE
+        energy_equality: True of False
+        solver: any CVXPy solver
+        max_recomp: int
+        get_dc: function to get the demand charge proxy
+    """
+    obj_config = [(revenue, quick_charge), (1, energy_cost)]
+    if get_dc is not None:
+        obj_config.append((1, get_dc))
+    else:
+        obj_config.append((1, demand_charge))
+    if regularizers is not None:
+        obj_config.extend(regularizers)
+    return base(obj_config, const_type, energy_equality, solver, max_recomp, offline, events, post_processor)
 
+def adacharge_load_flattening(external_signal=None, const_type=SOC, energy_equality=True, solver=None, max_recomp=None,
+                              offline=False, events=None, post_processor=None, regularizers=None, base=AdaChargeBase):
+    """
 
-class AdaChargeLoadFlattening(AdaChargeBase):
-    def __init__(self, external_signal=None, const_type=SOC, energy_equality=True, solver=None, max_recomp=None,
-                 offline=False, events=None, post_processor=None, regularizers=None):
-        """
+    Args:
+        external_signal: np.ndarray of an external signal which we will attempt to flatten.
+            Should be at least as long as the simulation.
+        const_type: SOC or AFFINE
+        energy_equality: True of False
+        solver: any CVXPy solver
+        max_recomp: int
+    """
+    obj_config = [(1, load_flattening, {'external_signal': external_signal})]
+    if regularizers is not None:
+        obj_config.extend(regularizers)
+    return base(obj_config, const_type, energy_equality, solver, max_recomp, offline, events, post_processor)
 
-        Args:
-            external_signal: np.ndarray of an external signal which we will attempt to flatten.
-                Should be at least as long as the simulation.
-            const_type: SOC or AFFINE
-            energy_equality: True of False
-            solver: any CVXPy solver
-            max_recomp: int
-        """
-        obj_config = [(1, load_flattening, {'external_signal': external_signal})]
-        if regularizers is not None:
-            obj_config.extend(regularizers)
-        super().__init__(obj_config, const_type, energy_equality, solver, max_recomp, offline, events, post_processor)
+# Aliases to not break existing code.
+AdaCharge = adacharge_qc
+AdaChargeProfitMax = adacharge_profit_max
+AdaChargeLoadFlattening = adacharge_load_flattening

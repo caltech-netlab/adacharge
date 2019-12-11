@@ -6,10 +6,10 @@ from datetime import datetime
 import cvxpy as cp
 from acnportal import acnsim
 from acnportal.signals import tariffs
-from adacharge import AdaCharge, AdaChargeProfitMax, AdaChargeLoadFlattening
+from adacharge import *
 
 
-class TestAdaCharge(TestCase):
+class Testadacharge_qc(TestCase):
     def test_single_ev_feasible(self):
         timezone = pytz.timezone('America/Los_Angeles')
         start = timezone.localize(datetime(2018, 9, 1))
@@ -23,7 +23,7 @@ class TestAdaCharge(TestCase):
         ev = acnsim.EV(5, 5+12, 6.6, 'PS-1', 'test', batt)
         events = acnsim.EventQueue([acnsim.PluginEvent(ev.arrival, ev)])
 
-        alg = AdaCharge(solver=cp.ECOS)
+        alg = adacharge_qc(solver=cp.ECOS)
 
         sim = acnsim.Simulator(cn, alg, events, start, period=period, verbose=False)
         sim.run()
@@ -48,7 +48,7 @@ class TestAdaCharge(TestCase):
         events = acnsim.acndata_events.generate_events(API_KEY, site, start_time, end_time, period, voltage,
                                                        default_battery_power, force_feasible=force_feasible)
         cn = acnsim.network.sites.caltech_acn(basic_evse=basic_evse, voltage=voltage)
-        alg = AdaCharge(solver=cp.ECOS)
+        alg = adacharge_qc(solver=cp.ECOS)
         sim = acnsim.Simulator(cn, alg, events, start_time, period=period, verbose=False)
         sim.run()
         self.assertGreater(acnsim.analysis.proportion_of_energy_delivered(sim), .9999)
@@ -68,7 +68,7 @@ class TestAdaChargeOffline(TestCase):
         ev = acnsim.EV(5, 5+12, voltage*32/1000, 'PS-1', 'test', batt)
         events = acnsim.EventQueue([acnsim.PluginEvent(ev.arrival, ev)])
 
-        alg = AdaCharge(offline=True, energy_equality=True, events=events)
+        alg = adacharge_qc(offline=True, energy_equality=True, events=events)
 
         sim = acnsim.Simulator(cn, alg, events, start, period=period, verbose=False)
         sim.run()
@@ -94,7 +94,7 @@ class TestAdaChargeOffline(TestCase):
         events = acnsim.acndata_events.generate_events(API_KEY, site, start_time, end_time, period, voltage,
                                                        default_battery_power, force_feasible=force_feasible)
         cn = acnsim.network.sites.caltech_acn(basic_evse=basic_evse, voltage=voltage)
-        alg = AdaCharge(energy_equality=True, solver=cp.MOSEK, offline=True, events=events)
+        alg = adacharge_qc(energy_equality=True, solver=cp.MOSEK, offline=True, events=events)
         sim = acnsim.Simulator(cn, alg, events, start_time, period=period, verbose=False)
         sim.run()
         self.assertGreater(acnsim.analysis.proportion_of_energy_delivered(sim), .9999)
@@ -115,7 +115,7 @@ class TestAdaChargeProfitMax(TestCase):
         ev = acnsim.EV(5, 5+12, 6.6, 'PS-1', 'test', batt)
         events = acnsim.EventQueue([acnsim.PluginEvent(ev.arrival, ev)])
 
-        alg = AdaChargeProfitMax(1000, solver=cp.ECOS)
+        alg = adacharge_profit_max(1000, solver=cp.ECOS)
 
         signals = {'tariff': tariffs.TimeOfUseTariff('sce_tou_ev_4_march_2019')}
         sim = acnsim.Simulator(cn, alg, events, start, period=period, verbose=False, signals=signals)
@@ -141,7 +141,7 @@ class TestAdaChargeProfitMax(TestCase):
         events = acnsim.acndata_events.generate_events(API_KEY, site, start_time, end_time, period, voltage,
                                                        default_battery_power, force_feasible=force_feasible)
         cn = acnsim.network.sites.caltech_acn(basic_evse=basic_evse, voltage=voltage)
-        alg = AdaChargeProfitMax(1000, solver=cp.ECOS)
+        alg = adacharge_profit_max(1000, solver=cp.ECOS)
         signals = {'tariff': tariffs.TimeOfUseTariff('sce_tou_ev_4_march_2019')}
         sim = acnsim.Simulator(cn, alg, events, start_time, period=period, verbose=False, signals=signals)
         sim.run()
@@ -187,7 +187,7 @@ class TestAdaChargeLoadFlattening(TestCase):
         events = acnsim.acndata_events.generate_events(API_KEY, site, start_time, end_time, period, voltage,
                                                        default_battery_power, force_feasible=force_feasible)
         cn = acnsim.network.sites.caltech_acn(basic_evse=basic_evse, voltage=voltage)
-        alg = AdaChargeLoadFlattening(solver=cp.ECOS)
+        alg = adacharge_load_flattening(solver=cp.ECOS)
         sim = acnsim.Simulator(cn, alg, events, start_time, period=period, verbose=False)
         sim.run()
         self.assertGreater(acnsim.analysis.proportion_of_energy_delivered(sim), .9999)
@@ -212,7 +212,7 @@ class TestAdaChargeLoadFlattening(TestCase):
         cn = acnsim.network.sites.caltech_acn(basic_evse=basic_evse, voltage=voltage)
 
         external_sig = 20*np.random.rand(600)
-        alg = AdaChargeLoadFlattening(external_signal=external_sig, solver=cp.ECOS)
+        alg = adacharge_load_flattening(external_signal=external_sig, solver=cp.ECOS)
         sim = acnsim.Simulator(cn, alg, events, start_time, period=period, verbose=False)
         sim.run()
         self.assertGreater(acnsim.analysis.proportion_of_energy_delivered(sim), .9999)
