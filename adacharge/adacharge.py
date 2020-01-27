@@ -1,5 +1,5 @@
 import numpy as np
-from acnportal.algorithms import BaseAlgorithm
+from acnportal.algorithms import BaseAlgorithm, least_laxity_first
 import cvxpy as cp
 from copy import deepcopy
 
@@ -8,8 +8,8 @@ from .post_processor import project_into_set
 
 
 class AdaChargeBase(BaseAlgorithm):
-    def __init__(self, obj_config, const_type=SOC, energy_equality=False, solver=None, max_recomp=None, offline=False, events=None,
-                 post_processor=None, rampdown=None):
+    def __init__(self, obj_config, const_type=SOC, energy_equality=False, solver=None, max_recomp=None, offline=False,
+                 events=None, post_processor=None, rampdown=None, minimum_charge=False):
         super().__init__(rampdown)
         self.obj_config = obj_config
         if len(self.obj_config) < 1:
@@ -33,6 +33,24 @@ class AdaChargeBase(BaseAlgorithm):
         self.post_processor = post_processor
         if post_processor is not None:
             self.max_recompute = 1
+        self.minimum_charge = minimum_charge
+
+    def register_interface(self, interface):
+        """ Register interface to the _simulator/physical system.
+
+        This interface is the only connection between the algorithm and what it is controlling. Its purpose is to
+        abstract the underlying network so that the same algorithms can run on a simulated environment or a physical
+        one.
+
+        Args:
+            interface (Interface): An interface to the underlying network whether simulated or real.
+
+        Returns:
+            None
+        """
+        super().register_interface(interface)
+        if self.post_processor is not None:
+            self.post_processor.register_interface(interface)
 
     def obj(self, rates, active_evs):
         return sum(x[0]*x[1](rates, active_evs, self.interface) if len(x) == 2 else
@@ -53,10 +71,19 @@ class AdaChargeBase(BaseAlgorithm):
         phases = {evse_id: self.interface.evse_phase(evse_id) for evse_id in evse_indexes}
         return infrastructure_constraints(rates, network_constraints, evse_indexes, self.const_type, phases)
 
-    def _build_problem(self, active_evs, offset_time):
-        if len(active_evs) == 0:
-            return {}
+    def feasible_min_rates(self, active_evs):
+        ev_queue = least_laxity_first(active_evs, self.interface)
+        schedule = {ev.station_id: [0] for ev in ev_queue}
+        removed = set()
+        for ev in ev_queue:
+            continuous, allowable_rates = self.interface.allowable_pilot_signals(ev.station_id)
+            schedule[ev.station_id][0] = allowable_rates[0] if continuous else allowable_rates[1]
+            if not self.interface.is_feasible(schedule):
+                schedule[ev.station_id][0] = 0
+                removed.add(ev.station_id)
+        return schedule, removed
 
+    def _build_problem(self, active_evs, offset_time):
         network_constraints = self.interface.get_constraints()
         active_evses = set(ev.station_id for ev in active_evs)
         evse_indexes = [evse_id for evse_id in network_constraints.evse_index if evse_id in active_evses]
@@ -65,8 +92,17 @@ class AdaChargeBase(BaseAlgorithm):
             ev.departure -= offset_time
         max_t = max(ev.departure for ev in active_evs) + 1
 
-        rates = cp.Variable((len(evse_indexes), max_t), name='rates')
         constraints = {}
+        rates = cp.Variable((len(evse_indexes), max_t), name='rates')
+
+        if self.minimum_charge:
+            min_rates, removed = self.feasible_min_rates(active_evs)
+            first_rates_min_vector = np.array([min_rates[evse_id][0] for evse_id in evse_indexes])
+            active_mask = np.array([evse_id not in removed for evse_id in evse_indexes])
+            if np.any(active_mask):
+                constraints.update({'min_rates': rates[active_mask, 0] >= first_rates_min_vector[active_mask]})
+            if np.any(np.logical_not(active_mask)):
+                constraints.update({'inactive': rates[np.logical_not(active_mask), 0] == 0})
         constraints.update(self.individual_rate_constraints(rates, active_evs, evse_indexes))
         constraints.update(self.energy_delivered_constraints(rates, active_evs, evse_indexes))
         constraints.update(self.infrastructure_constraints(rates, evse_indexes))
@@ -75,10 +111,13 @@ class AdaChargeBase(BaseAlgorithm):
         return cp.Problem(objective, list(constraints.values())), constraints, rates
 
     def _solve(self, active_evs, offset_time, verbose=False, solver=None):
+        if len(active_evs) == 0:
+            return {}
         prob, constraints, rates = self._build_problem(active_evs, offset_time)
         try:
             _ = prob.solve(verbose=verbose, solver=solver)
         except:
+            print('Solve failed. Trying with SCS.')
             _ = prob.solve(verbose=verbose, solver=cp.SCS)
 
         if prob.status in ["infeasible", "unbounded"]:
@@ -89,20 +128,31 @@ class AdaChargeBase(BaseAlgorithm):
         evse_indexes = [evse_id for evse_id in network_constraints.evse_index if evse_id in active_evses]
         schedule = {}
         for j, evse_id in enumerate(evse_indexes):
-            continuous, allowable_rates = self.interface.allowable_pilot_signals(evse_id)
-            if continuous:
-                schedule[evse_id] = np.clip(rates[j, :].value, a_min=self.interface.min_pilot_signal(evse_id),
-                                            a_max=self.interface.max_pilot_signal(evse_id))
-            else:
-                schedule[evse_id] = [project_into_set(x, allowable_rates) for x in rates[j, :].value]
+            schedule[evse_id] = rates[j, :].value
         return schedule
 
+    def project_to_evse_rates(self, intermediate_schedule):
+        new_schedule = {}
+        for evse_id in intermediate_schedule:
+            continuous, allowable_rates = self.interface.allowable_pilot_signals(evse_id)
+            if continuous:
+                new_schedule[evse_id] = np.clip(intermediate_schedule[evse_id], a_min=0, a_max=allowable_rates[1])
+            else:
+                new_schedule[evse_id] = [project_into_set(x, allowable_rates) for x in
+                                                  intermediate_schedule[evse_id]]
+        return new_schedule
+
     def schedule(self, active_evs):
+        if self.minimum_charge:
+            # active_evs = self.remove_active_evs_less_than_deadband(active_evs, 6)
+            active_evs = self.remove_active_evs_less_than_deadband(active_evs)
+
         if self.offline:
             if self.internal_schedule is None:
                 self.internal_schedule = self._solve(self.evs, 0, solver=self.solver)
             t = self.interface.current_time
-            return {ev.station_id: [self.internal_schedule[ev.station_id][t]] for ev in active_evs}
+            intermediate_schedule = {ev.station_id: [self.internal_schedule[ev.station_id][t]] for ev in active_evs}
+            return self.project_to_evse_rates(intermediate_schedule)
         else:
             if len(active_evs) == 0:
                 return {}
@@ -110,18 +160,27 @@ class AdaChargeBase(BaseAlgorithm):
                 t = self.interface.current_time
                 intermediate_schedule = self._solve(active_evs, t, solver=self.solver)
                 if self.post_processor is not None:
-                    pp = self.post_processor(self.interface, self.const_type)
-                    return pp.process(intermediate_schedule, active_evs)
+                    return self.post_processor.process(intermediate_schedule, active_evs)
                 else:
-                    return intermediate_schedule
+                    return self.project_to_evse_rates(intermediate_schedule)
 
 
 def adacharge_qc(const_type=SOC, energy_equality=False, solver=None, max_recomp=None, offline=False, events=None,
-                 post_processor=None, regularizers=None, rampdown=None, base=AdaChargeBase):
-    obj_config = [(1, quick_charge), (1e-6, equal_share)]
+                 post_processor=None, regularizers=None, rampdown=None, minimum_charge=False, base=AdaChargeBase):
+    obj_config = [(1, quick_charge), (1e-12, equal_share)]
     if regularizers is not None:
         obj_config.extend(regularizers)
-    return base(obj_config, const_type, energy_equality, solver, max_recomp, offline, events, post_processor, rampdown)
+    return base(obj_config, const_type, energy_equality, solver, max_recomp, offline, events, post_processor, rampdown,
+                minimum_charge)
+
+
+def adacharge_qc_relu(const_type=SOC, energy_equality=False, solver=None, max_recomp=None, offline=False, events=None,
+                 post_processor=None, regularizers=None, rampdown=None, minimum_charge=False, base=AdaChargeBase):
+    obj_config = [(1, quick_charge_relu), (1e-12, equal_share)]
+    if regularizers is not None:
+        obj_config.extend(regularizers)
+    return base(obj_config, const_type, energy_equality, solver, max_recomp, offline, events, post_processor, rampdown,
+                minimum_charge)
 
 
 def adacharge_profit_max(revenue, const_type=SOC, energy_equality=False, solver=None, max_recomp=None, offline=False,

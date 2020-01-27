@@ -12,8 +12,32 @@ def quick_charge(rates, active_evs, interface):
     return c * cp.sum(rates, axis=0)
 
 
+def quick_charge_relu(rates, active_evs, interface):
+    max_t = max(ev.departure for ev in active_evs) + 1
+    c = np.array([(max_t - t) / max_t for t in range(max_t)])
+    relu = cp.minimum(0, rates - 6)
+    return c * cp.sum(relu, axis=0)
+
+
 def equal_share(rates, active_evs, interface):
     return -cp.sum_squares(rates)
+
+
+def smoothing(rates, active_evs, interface):
+    # Smooth rates except first one
+    reg = -cp.norm1(cp.diff(rates, axis=1))
+
+    # Smooth first rate if EV was present in last timestep.
+    network_constraints = interface.get_constraints()
+    active_evses = set(ev.station_id for ev in active_evs)
+    evse_indexes = [evse_id for evse_id in network_constraints.evse_index if evse_id in active_evses]
+    prev_rates = interface.last_applied_pilot_signals
+    prev_mask = np.array([True if evse_id in prev_rates else False for evse_id in evse_indexes])
+    if np.any(prev_mask):
+        prev_rates_vect = np.array([prev_rates[evse_id] for evse_id in evse_indexes if evse_id in prev_rates])
+        reg = -cp.norm1(rates[prev_mask, 0] - prev_rates_vect)
+    return reg
+
 
 
 def energy_cost(rates, active_evs, interface):
@@ -32,10 +56,13 @@ def total_energy(rates, active_evs, interface):
     return cp.sum(rates) * (interface.period / 60) * voltage / 1000
 
 
-def demand_charge(rates, active_evs, interface):
+def demand_charge(rates, active_evs, interface, estimated_peak=None):
     schedule_peak = cp.max(cp.sum(rates, axis=0))
     voltage = interface.evse_voltage(active_evs[0].station_id)
-    return -interface.get_demand_charge()*cp.maximum(schedule_peak, interface.get_prev_peak()) * voltage / 1000
+    peak = cp.maximum(schedule_peak, interface.get_prev_peak())
+    if estimated_peak is not None:
+        peak = cp.maximum(peak, estimated_peak)
+    return -interface.get_demand_charge() * peak * voltage / 1000
 
 
 def load_flattening(rates, active_evs, interface, external_signal=None):
