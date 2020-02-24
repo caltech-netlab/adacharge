@@ -15,8 +15,8 @@ def project_into_set(x, allowable_set, eps=0.05):
     Returns:
         float: x rounded into the allowable_set.
     """
-
-    return [s for s in sorted(allowable_set) if s <= x + eps][-1]
+    less_than_x = [s for s in sorted(allowable_set + [0]) if s <= x + eps]
+    return less_than_x[-1] if len(less_than_x) > 0 else 0
 
 
 class IndexPostProcessor:
@@ -56,8 +56,8 @@ class IndexPostProcessor:
         self._interface = interface
 
     def metric(self, schedule, target, ev):
-        return -(np.ceil(target[ev.station_id][0]) - schedule[ev.station_id][0])**2
-        # return -(target[ev.station_id][0] - schedule[ev.station_id][0])**2
+#         return -(np.ceil(target[ev.station_id][0]) - schedule[ev.station_id][0])**2
+        return -(target[ev.station_id][0] - schedule[ev.station_id][0])**2
 
     def initial_allocation(self, target, active_evs):
         schedule = {}
@@ -66,30 +66,10 @@ class IndexPostProcessor:
             _continuous, _allowable_rates = self.interface.allowable_pilot_signals(evse_id)
             if _continuous:
                 raise ValueError('Indexed Projection is only designed for discrete allowable rate sets.')
-            schedule[evse_id] = [project_into_set(target[evse_id][0], _allowable_rates)]
+            schedule[evse_id] = [project_into_set(target[evse_id][0], _allowable_rates, eps=1e-3)]
             allowable_rates[evse_id] = _allowable_rates
         rate_idx_map = {evse_id: allowable_rates[evse_id].index(schedule[evse_id][0]) for evse_id in target}
         return schedule, rate_idx_map, allowable_rates
-
-    # def initial_allocation(self, target, active_evs):
-    #     # assign each EV its minimum rate in order by the target value
-    #     schedule = {ev.station_id: [0] for ev in active_evs}
-    #     rate_idx_map = {ev.station_id: 0 for ev in active_evs}
-    #     allowable_rates = {}
-    #
-    #     ev_queue = [ev for ev in sorted(active_evs, key=lambda x: self.metric(schedule, target, x), reverse=True)]
-    #     for ev in ev_queue:
-    #         continuous, evse_rates = self.interface.allowable_pilot_signals(ev.station_id)
-    #         if continuous:
-    #             raise ValueError('Indexed Projection is only designed for discrete allowable rate sets.')
-    #         allowable_rates[ev.station_id] = evse_rates
-    #         if self.min_charge_rate:
-    #             schedule[ev.station_id][0] = allowable_rates[ev.station_id][1]
-    #             rate_idx_map[ev.station_id] = 1
-    #             if not self.interface.is_feasible(schedule):
-    #                 schedule[ev.station_id][0] = 0
-    #                 rate_idx_map[ev.station_id] = 0
-    #     return schedule, rate_idx_map, allowable_rates
 
     def process(self, target, active_evs):
         schedule, rate_idx_map, allowable_rates = self.initial_allocation(target, active_evs)

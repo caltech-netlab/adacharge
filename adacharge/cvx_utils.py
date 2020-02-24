@@ -39,7 +39,6 @@ def smoothing(rates, active_evs, interface):
     return reg
 
 
-
 def energy_cost(rates, active_evs, interface):
         # TODO(zach): Should account for EVSEs with different voltages
         # We implicitly assume that energy_prices, scaled_revenue, and demand_charge should be scaled by voltage/1000.
@@ -85,6 +84,8 @@ def rate_constraints(rates, active_evs, evse_indexes, max_pilots, min_pilots=Non
         rates_ub[i, ev.arrival:ev.departure] = max_pilots[ev.session_id]
         if min_pilots is not None:
             rates_lb[i, ev.arrival:ev.departure] = min_pilots[ev.session_id]
+    if np.any(rates_lb > rates_ub):
+        raise ValueError('Lower bounds exceed upper bounds. Problem is infeasible.')
     constraints['Rate Upper Bounds'] = rates <= rates_ub
     constraints['Rate Lower Bounds'] = rates >= rates_lb
     return constraints

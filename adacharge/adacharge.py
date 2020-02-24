@@ -1,6 +1,4 @@
-import numpy as np
 from acnportal.algorithms import BaseAlgorithm, least_laxity_first
-import cvxpy as cp
 from copy import deepcopy
 
 from .cvx_utils import *
@@ -23,7 +21,7 @@ class AdaChargeBase(BaseAlgorithm):
                 raise ValueError('Error. Argument evs is required when solving offline')
             else:
                 for event in events._queue:
-                    if event[1].type == 'Plugin':
+                    if event[1].type == 'Plugin' or event[1].type == 'Arrival':
                         self.evs.append(deepcopy(event[1].ev))
         else:
             self.max_recompute = max_recomp
@@ -56,11 +54,26 @@ class AdaChargeBase(BaseAlgorithm):
         return sum(x[0]*x[1](rates, active_evs, self.interface) if len(x) == 2 else
                    x[0]*x[1](rates, active_evs, self.interface, **x[2]) for x in self.obj_config)
 
-    def individual_rate_constraints(self, rates, active_evs, evse_indexes):
-        max_rates = {ev.session_id: self.interface.max_pilot_signal(ev.station_id) for ev in active_evs}
+    def individual_rate_constraints(self, rates, active_evs, evse_indexes, minimum_charge=None):
+        min_pilots = {ev.session_id: np.zeros(ev.departure - ev.arrival) for ev in active_evs}
+        if self.minimum_charge:
+            feasible_minimums, removed = self.feasible_min_rates(active_evs)
+            for ev in active_evs:
+                min_pilots[ev.session_id][0] = feasible_minimums[ev.session_id]
+
+        max_pilots = {ev.session_id: np.repeat(self.interface.max_pilot_signal(ev.station_id), ev.departure - ev.arrival) for ev in active_evs}
+        # If rampdown is used, update the maximum pilot to be the min of rampdown and the EVSE max
         if self.rampdown is not None:
-            max_rates.update(self.rampdown.get_maximum_rates(active_evs))
-        return rate_constraints(rates, active_evs, evse_indexes, max_rates)
+            rampdown_pilots = self.rampdown.get_maximum_rates(active_evs)
+            for ev in active_evs:
+                if ev.session_id in rampdown_pilots:
+                    max_pilots[ev.session_id] = np.minimum(max_pilots[ev.session_id], rampdown_pilots[ev.session_id])
+                if self.minimum_charge and ev.session_id in removed:
+                    max_pilots[ev.session_id][0] = 0
+
+        for ev in active_evs:
+            max_pilots[ev.session_id] = np.maximum(max_pilots[ev.session_id], min_pilots[ev.session_id])
+        return rate_constraints(rates, active_evs, evse_indexes, max_pilots, min_pilots)
 
     def energy_delivered_constraints(self, rates, active_evs, evse_indexes):
         remaining_demands = {ev.session_id: self.interface.remaining_amp_periods(ev) for ev in active_evs}
@@ -80,8 +93,8 @@ class AdaChargeBase(BaseAlgorithm):
             schedule[ev.station_id][0] = allowable_rates[0] if continuous else allowable_rates[1]
             if not self.interface.is_feasible(schedule):
                 schedule[ev.station_id][0] = 0
-                removed.add(ev.station_id)
-        return schedule, removed
+                removed.add(ev.session_id)
+        return {ev.session_id: schedule[ev.station_id][0] for ev in active_evs}, removed
 
     def _build_problem(self, active_evs, offset_time):
         network_constraints = self.interface.get_constraints()
@@ -94,19 +107,9 @@ class AdaChargeBase(BaseAlgorithm):
 
         constraints = {}
         rates = cp.Variable((len(evse_indexes), max_t), name='rates')
-
-        if self.minimum_charge:
-            min_rates, removed = self.feasible_min_rates(active_evs)
-            first_rates_min_vector = np.array([min_rates[evse_id][0] for evse_id in evse_indexes])
-            active_mask = np.array([evse_id not in removed for evse_id in evse_indexes])
-            if np.any(active_mask):
-                constraints.update({'min_rates': rates[active_mask, 0] >= first_rates_min_vector[active_mask]})
-            if np.any(np.logical_not(active_mask)):
-                constraints.update({'inactive': rates[np.logical_not(active_mask), 0] == 0})
         constraints.update(self.individual_rate_constraints(rates, active_evs, evse_indexes))
         constraints.update(self.energy_delivered_constraints(rates, active_evs, evse_indexes))
         constraints.update(self.infrastructure_constraints(rates, evse_indexes))
-
         objective = cp.Maximize(self.obj(rates, active_evs))
         return cp.Problem(objective, list(constraints.values())), constraints, rates
 
@@ -185,7 +188,7 @@ def adacharge_qc_relu(const_type=SOC, energy_equality=False, solver=None, max_re
 
 def adacharge_profit_max(revenue, const_type=SOC, energy_equality=False, solver=None, max_recomp=None, offline=False,
                          events=None, post_processor=None, regularizers=None, get_dc=None, rampdown=None,
-                         base=AdaChargeBase):
+                         minimum_charge=False, base=AdaChargeBase):
     """
 
     Args:
@@ -203,7 +206,7 @@ def adacharge_profit_max(revenue, const_type=SOC, energy_equality=False, solver=
         obj_config.append((1, demand_charge))
     if regularizers is not None:
         obj_config.extend(regularizers)
-    return base(obj_config, const_type, energy_equality, solver, max_recomp, offline, events, post_processor, rampdown)
+    return base(obj_config, const_type, energy_equality, solver, max_recomp, offline, events, post_processor, rampdown, minimum_charge)
 
 
 def adacharge_load_flattening(external_signal=None, const_type=SOC, energy_equality=True, solver=None, max_recomp=None,
