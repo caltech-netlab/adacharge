@@ -9,14 +9,14 @@ AFFINE = 'AFFINE'
 def quick_charge(rates, active_evs, interface):
     max_t = max(ev.departure for ev in active_evs) + 1
     c = np.array([(max_t - t) / max_t for t in range(max_t)])
-    return c * cp.sum(rates, axis=0)
+    return c @ cp.sum(rates, axis=0)
 
 
 def quick_charge_relu(rates, active_evs, interface):
     max_t = max(ev.departure for ev in active_evs) + 1
     c = np.array([(max_t - t) / max_t for t in range(max_t)])
     relu = cp.minimum(0, rates - 6)
-    return c * cp.sum(relu, axis=0)
+    return c @ cp.sum(relu, axis=0)
 
 
 def equal_share(rates, active_evs, interface):
@@ -45,7 +45,7 @@ def energy_cost(rates, active_evs, interface):
         max_t = max(ev.departure for ev in active_evs) + 1
         voltage = interface.evse_voltage(active_evs[0].station_id)
         energy_prices = np.array(interface.get_prices(max_t)) * (interface.period / 60) * voltage / 1000
-        return -energy_prices*cp.sum(rates, axis=0)
+        return -energy_prices @ cp.sum(rates, axis=0)
 
 
 def total_energy(rates, active_evs, interface):
@@ -123,12 +123,12 @@ def infrastructure_constraints(rates, network_constraints, evse_indexes, const_t
         for j in range(trimmed_constraints.shape[0]):
             v = np.stack(
                 [trimmed_constraints[j, :] * np.cos(phase_vector), trimmed_constraints[j, :] * np.sin(phase_vector)])
-            constraints[str(trimmed_constraint_ids[j])] = cp.norm(v * rates, axis=0) <= \
+            constraints[str(trimmed_constraint_ids[j])] = cp.norm(v @ rates, axis=0) <= \
                                                           network_constraints.magnitudes[inactive_mask][j]
     elif const_type == AFFINE:
         for j in range(trimmed_constraints.shape[0]):
             v = np.abs(trimmed_constraints[j, :])
-            constraints[str(trimmed_constraint_ids[j])] = v * rates <= network_constraints.magnitudes[inactive_mask][j]
+            constraints[str(trimmed_constraint_ids[j])] = v @ rates <= network_constraints.magnitudes[inactive_mask][j]
     else:
         raise ValueError(
             'Invalid infrastructure constraint type: {0}. Valid options are SOC or AFFINE.'.format(const_type))
