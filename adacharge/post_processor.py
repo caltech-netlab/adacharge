@@ -1,5 +1,6 @@
 from .cvx_utils import *
 import heapq
+from acnportal import algorithms
 
 
 def project_into_set(x, allowable_set, eps=0.05):
@@ -55,8 +56,8 @@ class IndexPostProcessor:
         """
         self._interface = interface
 
-    def metric(self, schedule, target, ev):
-#         return -(np.ceil(target[ev.station_id][0]) - schedule[ev.station_id][0])**2
+    @staticmethod
+    def metric(schedule, target, ev):
         return -(target[ev.station_id][0] - schedule[ev.station_id][0])**2
 
     def initial_allocation(self, target, active_evs):
@@ -72,6 +73,7 @@ class IndexPostProcessor:
         return schedule, rate_idx_map, allowable_rates
 
     def process(self, target, active_evs):
+        target_peak = sum(t[0] for t in target.values())
         schedule, rate_idx_map, allowable_rates = self.initial_allocation(target, active_evs)
         evs = {ev.station_id: ev for ev in active_evs}
         # put all EVs with non-zero in a heapq sorted by deviation from target
@@ -83,20 +85,33 @@ class IndexPostProcessor:
             if rate_idx_map[station_id] < len(allowable_rates[station_id]) - 1:
                 schedule[station_id][0] = allowable_rates[station_id][rate_idx_map[station_id] + 1]
                 new_dev = self.metric(schedule, target, evs[station_id])
-                if new_dev > dev and self.interface.is_feasible(schedule) and schedule[station_id][0] <= self.interface.remaining_amp_periods(evs[station_id]):
+                if new_dev > dev and \
+                        sum(s[0] for s in schedule.values()) <= target_peak and \
+                        self.interface.is_feasible(schedule) and \
+                        schedule[station_id][0] <= self.interface.remaining_amp_periods(evs[station_id]):
                     rate_idx_map[station_id] += 1
                     heapq.heappush(queue, (new_dev, station_id))
                 else:
                     schedule[station_id][0] = allowable_rates[station_id][rate_idx_map[station_id]]
         return schedule
+    
+    
+class RRPostProcessor(IndexPostProcessor):
+        def process(self, target, active_evs):
+            target_peak = sum(t[0] for t in target.values())
+            schedule, rate_idx_map, allowable_rates = self.initial_allocation(target, active_evs)
+            evs = {ev.station_id: ev for ev in active_evs}
+            rr = algorithms.RoundRobin(algorithms.least_laxity_first, peak_limit=target_peak)
+            rr.register_interface(self.interface)
+            schedule = rr.schedule(active_evs, init_schedule=schedule)
+            return schedule
 
 
 class AdaChargePostProcessor:
-    def __init__(self, const_type=SOC, solver=None, eta=1e-5, integer_program=False, round_up_target=False):
+    def __init__(self, const_type=SOC, solver=None, integer_program=False, round_up_target=False):
         self._interface = None
         self.const_type = const_type
         self.solver = solver
-        self.eta = eta
         self.integer_program = integer_program
         self.round_up_target = round_up_target
 
@@ -131,8 +146,7 @@ class AdaChargePostProcessor:
         """
         self._interface = interface
 
-    def obj(self, rates, target, eta):
-        # return -cp.square(cp.sum(rates) - np.sum(target)) - eta*cp.sum_squares(rates - target)
+    def obj(self, rates, target):
         return -cp.sum_squares(rates - target)
 
     def feasible_min_rates(self, active_evs, target):
@@ -156,6 +170,7 @@ class AdaChargePostProcessor:
             target_vector = np.array([np.ceil(target[evse_id][0]) for evse_id in evse_indexes])
         else:
             target_vector = np.array([target[evse_id][0] for evse_id in evse_indexes])
+        target_peak = np.sum(target_vector)
         rates = cp.Variable(target_vector.shape, name='rates', integer=self.integer_program)
         constraints = {}
 
@@ -165,8 +180,8 @@ class AdaChargePostProcessor:
         for ev in active_evs:
             i = evse_indexes.index(ev.station_id)
             rates_lb[i] = feasible_min[ev.station_id]
-            rates_ub[i] = min([ self.interface.max_pilot_signal(ev.station_id),
-                                self.interface.remaining_amp_periods(ev)])
+            rates_ub[i] = min([self.interface.max_pilot_signal(ev.station_id),
+                               self.interface.remaining_amp_periods(ev)])
             rates_ub[i] = max(rates_ub[i], rates_lb[i])  # upper bound should never be less than the lower bound
 
         constraints['Rate Upper Bounds'] = rates <= rates_ub
@@ -174,8 +189,8 @@ class AdaChargePostProcessor:
 
         phases = {evse_id: self.interface.evse_phase(evse_id) for evse_id in evse_indexes}
         constraints.update(infrastructure_constraints(rates, network_constraints, evse_indexes, self.const_type, phases))
-
-        objective = cp.Maximize(self.obj(rates, target_vector, self.eta))
+        constraints['Peak Limit'] = cp.sum(rates) <= target_peak
+        objective = cp.Maximize(self.obj(rates, target_vector))
         prob = cp.Problem(objective, list(constraints.values()))
 
         try:
@@ -200,6 +215,3 @@ class AdaChargePostProcessor:
                 r = project_into_set(r, allowable_rates)
             schedule[evse_id] = [r]
         return schedule
-        # index_projection = IndexPostProcessor()
-        # index_projection.register_interface(self.interface)
-        # return index_projection.process(schedule, active_evs)
