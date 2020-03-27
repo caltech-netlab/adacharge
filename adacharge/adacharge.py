@@ -1,8 +1,8 @@
 from acnportal.algorithms import BaseAlgorithm, least_laxity_first
 from copy import deepcopy
 
-from .cvx_utils import *
-from .post_processor import project_into_set
+from cvx_utils import *
+from post_processor import project_into_set
 
 
 class AdaChargeBase(BaseAlgorithm):
