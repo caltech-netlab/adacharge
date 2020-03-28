@@ -1,4 +1,5 @@
-from typing import List
+from typing import List, Union
+from collections import namedtuple
 import numpy as np
 import cvxpy as cp
 from algo_datatypes import SessionInfo, InfrastructureInfo
@@ -6,6 +7,9 @@ from algo_datatypes import SessionInfo, InfrastructureInfo
 
 class InfeasibilityException(Exception):
     pass
+
+
+ObjectiveComponent = namedtuple('ObjectiveComponent', ['function', 'coefficient', 'kwargs'], defaults=[1, {}])
 
 
 class AdaptiveChargingAlgorithmBase:
@@ -17,13 +21,13 @@ class AdaptiveChargingAlgorithmBase:
         enforce_energy_equality (bool): If True, energy delivered must be equal to energy requested for each EV.
             If False, energy delivered must be less than or equal to request.
         solver (str): Backend solver to use. See CVXPY for available solvers.
-        peak_limit (float): Limit on aggregate peak current. If None, no limit is enforced.
     """
-    def __init__(self, constraint_type='SOC', enforce_energy_equality=False, solver='ECOS', peak_limit=None):
+    def __init__(self, objective: List[ObjectiveComponent], constraint_type='SOC', enforce_energy_equality=False,
+                 solver='ECOS', peak_limit=None):
         self.constraint_type = constraint_type
         self.enforce_energy_equality = enforce_energy_equality
         self.solver = solver
-        self.peak_limit = peak_limit
+        self.objective_configuration = objective
 
     @staticmethod
     def charging_rate_bounds(rates: cp.Variable, active_sessions: List[SessionInfo], evse_index: List[str]):
@@ -105,13 +109,39 @@ class AdaptiveChargingAlgorithmBase:
                 'Invalid infrastructure constraint type: {0}. Valid options are SOC or AFFINE.'.format(constraint_type))
         return constraints
 
-    def build_problem(self, active_sessions: List[SessionInfo], infrastructure: InfrastructureInfo):
-        """ Build parts of the optimization problem including variables, constraints, and objective functin.
+    @staticmethod
+    def peak_constraint(rates: cp.Variable, peak_limit: Union[float, List[float], np.ndarray]):
+        """ Get constraints enforcing infrastructure limits.
+
+        Args:
+            rates (cp.Variable): cvxpy variable representing all charging rates. Shape should be (N, T) where N is the
+                total number of EVSEs in the system and T is the length of the optimization horizon.
+            peak_limit (Union[float, List[float], np.ndarray]): Limit on aggregate peak current. If None, no limit is
+                enforced.
+
+        Returns:
+            List[cp.Constraint]: List of constraints, one for each bottleneck in the electrical infrastructure.
+        """
+        if peak_limit is not None:
+            return [cp.max(cp.sum(rates, axis=0)) <= peak_limit]
+        return []
+
+    def build_objective(self, rates: cp.Variable, active_sessions: List[SessionInfo], infrastructure: InfrastructureInfo):
+        obj = cp.Constant(0)
+        for component in self.objective_configuration:
+            obj += component.coefficient * component.function(rates, active_sessions, infrastructure, **component.kwargs)
+        return obj
+
+    def build_problem(self, active_sessions: List[SessionInfo], infrastructure: InfrastructureInfo,
+                      peak_limit: Union[float, List[float], np.ndarray] = None):
+        """ Build parts of the optimization problem including variables, constraints, and objective function.
 
         Args:
             active_sessions (List[SessionInfo]): List of SessionInfo objects for all active charging sessions.
             infrastructure (InfrastructureInfo): InfrastructureInfo object describing the electrical infrastructure at
                 a site.
+            peak_limit (Union[float, List[float], np.ndarray]): Limit on aggregate peak current. If None, no limit is
+                enforced.
 
         Returns:
             Dict[str: object]:
@@ -136,33 +166,41 @@ class AdaptiveChargingAlgorithmBase:
         constraints.extend(self.infrastructure_constraints(rates, infrastructure, self.constraint_type))
 
         # Peak Limit
-        if self.peak_limit is not None:
-            constraints.append(cp.max(cp.sum(rates, axis=0)) <= self.peak_limit)
+        constraints.extend(self.peak_constraint(rates, peak_limit))
 
         # Objective Function
-        c = np.array([(optimization_horizon - t) / optimization_horizon for t in range(optimization_horizon)])
-        obj = c @ cp.sum(rates, axis=0)
-        objective = cp.Maximize(obj)
+        objective = cp.Maximize(self.build_objective(rates, active_sessions, infrastructure))
         return {'objective': objective,
                 'constraints': constraints,
                 'variables': {'rates': rates}}
 
-    def solve(self, active_sessions: List[SessionInfo], infrastructure: InfrastructureInfo):
+    def solve(self, active_sessions: List[SessionInfo], infrastructure: InfrastructureInfo,
+              peak_limit: Union[float, List[float], np.ndarray] = None):
         """ Solve optimization problem to create a schedule of charging rates.
 
         Args:
             active_sessions (List[SessionInfo]): List of SessionInfo objects for all active charging sessions.
             infrastructure (InfrastructureInfo): InfrastructureInfo object describing the electrical infrastructure at
                 a site.
+            peak_limit (Union[float, List[float], np.ndarray]): Limit on aggregate peak current. If None, no limit is
+                enforced.
+
 
         Returns:
             np.Array: Numpy array of charging rates of shape (N, T) where N is the number of EVSEs in the network and
                 T is the length of the optimization horizon. Rows are ordered according to the order of evse_index in
                 infrastructure.
         """
-        problem_dict = self.build_problem(active_sessions, infrastructure)
+        problem_dict = self.build_problem(active_sessions, infrastructure, peak_limit)
         prob = cp.Problem(problem_dict['objective'], problem_dict['constraints'])
         prob.solve(solver=self.solver)
         if prob.status not in [cp.OPTIMAL, cp.OPTIMAL_INACCURATE]:
             raise InfeasibilityException(f'Solve failed with status {prob.status}')
         return problem_dict['variables']['rates'].value
+
+
+# Objective Functions
+def quick_charge(rates, active_sessions, infrastructure):
+    optimization_horizon = max(s.arrival_offset + s.remaining_time for s in active_sessions)
+    c = np.array([(optimization_horizon - t) / optimization_horizon for t in range(optimization_horizon)])
+    return c @ cp.sum(rates, axis=0)
