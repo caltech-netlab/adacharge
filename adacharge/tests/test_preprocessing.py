@@ -1,7 +1,7 @@
 from unittest import TestCase
 from unittest.mock import Mock
 from preprocessing import *
-from test_utils import *
+from testing_utilities import *
 
 ARRIVAL_TIME = 0
 SESSION_DUR = 5

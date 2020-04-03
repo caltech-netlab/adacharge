@@ -2,7 +2,8 @@ from typing import List, Union
 from collections import namedtuple
 import numpy as np
 import cvxpy as cp
-from algo_datatypes import SessionInfo, InfrastructureInfo
+# from acnportal.interface import SessionInfo, InfrastructureInfo
+from datatypes import SessionInfo, InfrastructureInfo
 
 
 class InfeasibilityException(Exception):
@@ -12,7 +13,7 @@ class InfeasibilityException(Exception):
 ObjectiveComponent = namedtuple('ObjectiveComponent', ['function', 'coefficient', 'kwargs'], defaults=[1, {}])
 
 
-class AdaptiveChargingAlgorithmBase:
+class AdaptiveChargingOptimization:
     """ Base class for all MPC based charging algorithms.
 
     Args:
@@ -22,8 +23,9 @@ class AdaptiveChargingAlgorithmBase:
             If False, energy delivered must be less than or equal to request.
         solver (str): Backend solver to use. See CVXPY for available solvers.
     """
-    def __init__(self, objective: List[ObjectiveComponent], constraint_type='SOC', enforce_energy_equality=False,
-                 solver='ECOS', peak_limit=None):
+    def __init__(self, objective: List[ObjectiveComponent], period, constraint_type='SOC',
+                 enforce_energy_equality=False, solver='ECOS'):
+        self.period = period
         self.constraint_type = constraint_type
         self.enforce_energy_equality = enforce_energy_equality
         self.solver = solver
@@ -53,7 +55,8 @@ class AdaptiveChargingAlgorithmBase:
         return [rates >= lb, rates <= ub]
 
     @staticmethod
-    def energy_constraints(rates: cp.Variable, active_sessions: List[SessionInfo], evse_index: List[str], enforce_energy_equality=False):
+    def energy_constraints(rates: cp.Variable, active_sessions: List[SessionInfo], infrastructure: InfrastructureInfo,
+                           period, enforce_energy_equality=False):
         """ Get constraints on the energy delivered for each session.
 
         Args:
@@ -70,12 +73,13 @@ class AdaptiveChargingAlgorithmBase:
         """
         constraints = []
         for session in active_sessions:
-            i = evse_index.index(session.station_id)
-            constraint_id = 'EnergyConstraint{0}'.format(session.session_id)
+            i = infrastructure.get_station_index(session.station_id)
+            planned_energy = cp.sum(rates[i, session.arrival_offset:session.arrival_offset + session.remaining_time])
+            planned_energy *= infrastructure.voltages[i] * period / 1e3 / 60
             if enforce_energy_equality:
-                constraints.append(cp.sum(rates[i, session.arrival_offset:session.arrival_offset + session.remaining_time]) == session.remaining_energy)
+                constraints.append(planned_energy == session.remaining_energy)
             else:
-                constraints.append(cp.sum(rates[i, session.arrival_offset:session.arrival_offset + session.remaining_time]) <= session.remaining_energy)
+                constraints.append(planned_energy <= session.remaining_energy)
         return constraints
 
     @staticmethod
@@ -95,15 +99,15 @@ class AdaptiveChargingAlgorithmBase:
         """
         constraints = []
         if constraint_type == 'SOC':
-            phase_in_rad = np.deg2rad(infrastructure.phases)
             if infrastructure.phases is None:
                 raise ValueError('phases is required when using SOC infrastructure constraints.')
+            phase_in_rad = np.deg2rad(infrastructure.phases)
             for j, v in enumerate(infrastructure.constraint_matrix):
                 a = np.stack([v * np.cos(phase_in_rad), v * np.sin(phase_in_rad)])
-                constraints.append(cp.norm(a @ rates, axis=0) <= infrastructure.magnitudes[j])
+                constraints.append(cp.norm(a @ rates, axis=0) <= infrastructure.constraint_limits[j])
         elif constraint_type == 'LINEAR':
             for j, v in enumerate(infrastructure.constraint_matrix):
-                constraints.append(np.abs(v) @ rates <= infrastructure.magnitudes[j])
+                constraints.append(np.abs(v) @ rates <= infrastructure.constraint_limits[j])
         else:
             raise ValueError(
                 'Invalid infrastructure constraint type: {0}. Valid options are SOC or AFFINE.'.format(constraint_type))
@@ -123,7 +127,7 @@ class AdaptiveChargingAlgorithmBase:
             List[cp.Constraint]: List of constraints, one for each bottleneck in the electrical infrastructure.
         """
         if peak_limit is not None:
-            return [cp.max(cp.sum(rates, axis=0)) <= peak_limit]
+            return [cp.sum(rates, axis=0) <= peak_limit]
         return []
 
     def build_objective(self, rates: cp.Variable, active_sessions: List[SessionInfo], infrastructure: InfrastructureInfo):
@@ -149,7 +153,6 @@ class AdaptiveChargingAlgorithmBase:
                 'constraints': list of all constraints for the optimization problem
                 'variables': dict mapping variable name to cvxpy Variable.
         """
-        # Here we take in arguments which describe the problem and build a problem instance.
         optimization_horizon = max(s.arrival_offset + s.remaining_time for s in active_sessions)
         num_evses = len(infrastructure.evse_index)
         rates = cp.Variable(shape=(num_evses, optimization_horizon))
@@ -160,7 +163,8 @@ class AdaptiveChargingAlgorithmBase:
         constraints.extend(self.charging_rate_bounds(rates, active_sessions, infrastructure.evse_index))
 
         # Energy Delivered Constraints
-        constraints.extend(self.energy_constraints(rates, active_sessions, infrastructure.evse_index, self.enforce_energy_equality))
+        constraints.extend(self.energy_constraints(rates, active_sessions, infrastructure,
+                                                   self.period, self.enforce_energy_equality))
 
         # Infrastructure Constraints
         constraints.extend(self.infrastructure_constraints(rates, infrastructure, self.constraint_type))
@@ -191,6 +195,7 @@ class AdaptiveChargingAlgorithmBase:
                 T is the length of the optimization horizon. Rows are ordered according to the order of evse_index in
                 infrastructure.
         """
+        # Here we take in arguments which describe the problem and build a problem instance.
         problem_dict = self.build_problem(active_sessions, infrastructure, peak_limit)
         prob = cp.Problem(problem_dict['objective'], problem_dict['constraints'])
         prob.solve(solver=self.solver)
@@ -200,7 +205,79 @@ class AdaptiveChargingAlgorithmBase:
 
 
 # Objective Functions
-def quick_charge(rates, active_sessions, infrastructure):
-    optimization_horizon = max(s.arrival_offset + s.remaining_time for s in active_sessions)
+
+"""
+Inputs: 
+    rates -> cp.Variable()
+    
+Sometime needed
+    infrastructure 
+    active_sessions
+    period
+    
+Signals -> signals_interface?
+    previous_rates
+    energy_tariffs 
+    demand_charge
+    external_demand
+    signal_to_follow
+"""
+
+
+def charging_power(rates, infrastructure):
+    return (rates.T * infrastructure.voltages).T / 1e3
+
+
+def aggregate_power(rates, infrastructure):
+    return cp.sum(charging_power(rates, infrastructure), axis=0)
+
+
+def get_period_energy(rates, infrastructure, period):
+    power = charging_power(rates, infrastructure)
+    period_in_hours = period / 60
+    return power * period_in_hours
+
+
+def quick_charge(rates, *args, **kwargs):
+    optimization_horizon = rates.shape[1]
     c = np.array([(optimization_horizon - t) / optimization_horizon for t in range(optimization_horizon)])
     return c @ cp.sum(rates, axis=0)
+
+
+def equal_share(rates, *args, **kwargs):
+    return -cp.sum_squares(rates)
+
+
+def smoothing(rates, active_sessions, infrastructure, previous_rates, normp=1, *args, **kwargs):
+    reg = -cp.norm(cp.diff(rates, axis=1), p=normp)
+    prev_mask = np.logical_not(np.isnan(previous_rates))
+    if np.any(prev_mask):
+        reg -= cp.norm(rates[0, prev_mask] - previous_rates[prev_mask], p=normp)
+    return reg
+
+
+def energy_cost(rates, infrastructure, period, energy_prices):
+    energy_per_period = get_period_energy(rates, infrastructure, period) # get charging rates in kWh per period
+    return -energy_prices @ cp.sum(energy_per_period, axis=0)
+
+
+def total_energy(rates, infrastructure, period):
+    return cp.sum(get_period_energy(rates, infrastructure, period))
+
+
+def peak(rates, infrastructure):
+    agg_power = aggregate_power(rates, infrastructure)
+    return cp.max(agg_power)
+
+
+def peak_w_baseline(rates, infrastructure, baseline_peak=0):
+    schedule_peak = peak(rates, infrastructure)
+    return cp.maximum(schedule_peak, baseline_peak)
+
+
+def load_flattening(rates, infrastructure, external_signal=None):
+    if external_signal is None:
+        external_signal = np.zeros(rates.shape[1])
+    aggregate_rates_kW = aggregate_power(rates, infrastructure)
+    total_aggregate = aggregate_rates_kW + external_signal
+    return -cp.sum_squares(total_aggregate)

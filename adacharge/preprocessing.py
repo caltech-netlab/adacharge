@@ -2,9 +2,26 @@ from typing import List
 from copy import deepcopy
 import numpy as np
 
-from algo_datatypes import SessionInfo, InfrastructureInfo
+from datatypes import SessionInfo, InfrastructureInfo
 from acnportal.algorithms import Rampdown
-from algorithm_utils import infrastructure_constraints_feasible
+from utils import infrastructure_constraints_feasible
+
+
+def enforce_evse_pilot_limit(active_sessions: List[SessionInfo], infrastructure: InfrastructureInfo):
+    """ Update the max_rates vector for each session to be less than the max pilot supported by its EVSE.
+
+    Args:
+        active_sessions (List[SessionInfo]): List of SessionInfo objects for all active charging sessions.
+        infrastructure (InfrastructureInfo): Description of the charging infrastructure.
+
+    Returns:
+        List[SessionInfo]: Active sessions with max_rates updated to be at most the max_pilot of the corresponding EVSE.
+    """
+    new_sessions = deepcopy(active_sessions)
+    for session in new_sessions:
+        i = infrastructure.get_station_index(session.station_id)
+        session.max_rates = np.minimum(session.max_rates, infrastructure.max_pilot[i])
+    return new_sessions
 
 
 def reconcile_max_and_min(session: SessionInfo):
@@ -65,12 +82,13 @@ def apply_minimum_charging_rate(active_sessions: List[SessionInfo], infrastructu
         minimum pilot.
     
     Args:
-        active_sessions:
-        infrastructure:
-        override:
+        active_sessions (List[SessionInfo]): List of SessionInfo objects for all active charging sessions.
+        infrastructure (InfrastructureInfo): Description of the charging infrastructure.
+        override (float): Alternative minimum pilot which overrides the EVSE minimum if the EVSE minimum is less than
+            override.
 
     Returns:
-
+        List[SessionInfo]: Active sessions with updated minimum charging rate for the first control period.
     """
     session_queue = sorted(active_sessions, key=lambda x: x.arrival)
     session_queue = expand_max_min_rates(session_queue)
