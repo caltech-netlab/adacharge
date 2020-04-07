@@ -8,7 +8,7 @@ def session_generator(N, arrivals, departures, remaining_energy, max_rates, min_
         station_id = station_ids[i] if station_ids is not None else f'{i}'
         session_id = f'{i}'
         min_rate = min_rates[i] if min_rates is not None else 0
-        s = SessionInfo(station_id, session_id, remaining_energy[i], 0, arrivals[i], departures[i], 208, 0,
+        s = SessionInfo(station_id, session_id, remaining_energy[i], 0, arrivals[i], departures[i], 0,
                         min_rate, max_rates[i])
         sessions.append(s)
     return sessions

@@ -2,7 +2,6 @@ from typing import List, Union
 from collections import namedtuple
 import numpy as np
 import cvxpy as cp
-# from acnportal.interface import SessionInfo, InfrastructureInfo
 from datatypes import SessionInfo, InfrastructureInfo
 
 

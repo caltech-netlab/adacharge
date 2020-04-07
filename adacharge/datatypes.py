@@ -15,7 +15,7 @@ class SessionInfo:
             min_rates:
             max_rates:
     """
-    def __init__(self, station_id, session_id, energy_requested, energy_delivered, arrival, departure, voltage,
+    def __init__(self, station_id, session_id, energy_requested, energy_delivered, arrival, departure,
                  current_time=0, min_rates=0, max_rates=float('inf')):
         self.station_id = station_id
         self.session_id = session_id
@@ -23,7 +23,6 @@ class SessionInfo:
         self.energy_delivered = energy_delivered
         self.arrival = arrival
         self.departure = departure
-        self.voltage = voltage
         self.current_time = current_time
         self.min_rates = np.array([min_rates] * self.remaining_time) if np.isscalar(min_rates) else min_rates
         self.max_rates = np.array([max_rates] * self.remaining_time) if np.isscalar(max_rates) else max_rates
@@ -33,12 +32,13 @@ class SessionInfo:
         return self.energy_requested - self.energy_delivered
 
     @property
-    def remaining_time(self):
-        return max(self.departure - self.current_time, 0)
-
-    @property
     def arrival_offset(self):
         return max(self.arrival - self.current_time, 0)
+
+    @property
+    def remaining_time(self):
+        offset = max(self.arrival_offset, self.current_time)
+        return max(self.departure - offset, 0)
 
 
 class InfrastructureInfo:
