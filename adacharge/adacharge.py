@@ -7,6 +7,14 @@ from preprocessing import apply_rampdown, apply_minimum_charging_rate, enforce_e
 from postprocessing import project_into_continuous_feasible_pilots, project_into_discrete_feasible_pilots
 from postprocessing import index_based_reallocation
 
+# ---------------------------------------------------------
+#  These utilities translate from Interface format to
+#  InfrastructureInfo and SessionInfo formats. This will
+#  hopefully be incorporated into a new ACN-Sim Interface
+#  in a future release. For now we can use these functions
+#  for conversion.
+# ---------------------------------------------------------
+
 
 def get_infrastructure_info(interface) -> InfrastructureInfo:
     """ Returns an InfrastructureInfo object generated from interface.
@@ -17,14 +25,21 @@ def get_infrastructure_info(interface) -> InfrastructureInfo:
     Returns:
         InfrastructureInfo: A description of the charging infrastructure.
     """
+    def fn_to_list(fn, arg_order):
+        return np.array([fn(arg) for arg in arg_order])
+
     constraints = interface.get_constraints()
+
+    # If constraint_matrix of magnitudes is None, replace with empty array
     constraint_matrix = constraints.constraint_matrix if constraints.constraint_matrix is not None else np.array([])
     magnitudes = constraints.magnitudes if constraints.magnitudes is not None else np.array([])
-    phases = np.array([interface.evse_phase(station_id) for station_id in constraints.evse_index])
-    voltages = np.array([interface.evse_voltage(station_id) for station_id in constraints.evse_index])
-    min_pilot_signals = np.array([interface.min_pilot_signal(station_id) for station_id in constraints.evse_index])
-    max_pilot_signals = np.array([interface.max_pilot_signal(station_id) for station_id in constraints.evse_index])
-    allowable_rates = [interface.allowable_pilot_signals(station_id)[1] for station_id in constraints.evse_index]
+
+    # Interface gets values one at a time, populate arrays for each field.
+    phases = fn_to_list(interface.evse_phase, constraints.evse_index)
+    voltages = fn_to_list(interface.evse_voltage, constraints.evse_index)
+    min_pilot_signals = fn_to_list(interface.min_pilot_signal, constraints.evse_index)
+    max_pilot_signals = fn_to_list(interface.max_pilot_signal, constraints.evse_index)
+    allowable_rates = np.array([interface.allowable_pilot_signals(station_id)[1] for station_id in constraints.evse_index])
     return InfrastructureInfo(constraint_matrix, magnitudes, phases, voltages,
                               constraints.constraint_index, constraints.evse_index,
                               max_pilot_signals, min_pilot_signals, allowable_rates)
@@ -156,7 +171,6 @@ class AdaptiveChargingAlgorithmOffline(BaseAlgorithm):
         rates_matrix = project_into_continuous_feasible_pilots(rates_matrix, infrastructure)
         self.internal_schedule = {station_id: rates_matrix[i, :]
                                   for i, station_id in enumerate(infrastructure.evse_index)}
-        self.internal_matrix = rates_matrix
 
     def schedule(self, active_evs):
         """ See BaseAlgorithm """

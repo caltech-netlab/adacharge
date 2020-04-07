@@ -50,6 +50,7 @@ class InfrastructureInfo:
         self.voltages = voltages
         self.constraint_index = constraint_index
         self.evse_index = eves_index
+        self._evse_index_dict = {station_id: i for i, station_id in enumerate(self.evse_index)}
         self.max_pilot = max_pilot
         self.min_pilot = min_pilot
         self.allowable_pilots = allowable_pilots if allowable_pilots is not None else [None] * self.num_stations
@@ -59,4 +60,4 @@ class InfrastructureInfo:
         return len(self.evse_index)
 
     def get_station_index(self, station_id):
-        return self.evse_index.index(station_id)
+        return self._evse_index_dict[station_id]
