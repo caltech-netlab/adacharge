@@ -51,7 +51,10 @@ class TestTinyFeasibleNetwork(BaseAlgoTestScenarios):
         self.energy_demand = 3.3
         self.horizon = 12
         asa = AdaptiveChargingOptimization(DEFAULT_OBJECTIVE, self.period)
-        self.sessions = session_generator(2, [0]*2, [self.horizon]*2, [self.energy_demand]*2,
+        self.sessions = session_generator(N=2,
+                                          arrivals=[0]*2,
+                                          departures=[self.horizon]*2,
+                                          remaining_energy=[self.energy_demand]*2,
                                           max_rates=[self.max_rate]*2)
         self.infra = single_phase_network(N=2, limit=64)
         self.rates = asa.solve(self.sessions, self.infra)
@@ -64,7 +67,10 @@ class TestTinyFeasibleNetworkEnergyEquality(BaseAlgoTestScenarios):
         self.energy_demand = 3.3
         self.horizon = 12
         asa = AdaptiveChargingOptimization(DEFAULT_OBJECTIVE, self.period, enforce_energy_equality=True)
-        self.sessions = session_generator(2, [0]*2, [self.horizon]*2, [self.energy_demand]*2,
+        self.sessions = session_generator(N=2,
+                                          arrivals=[0]*2,
+                                          departures=[self.horizon]*2,
+                                          remaining_energy=[self.energy_demand]*2,
                                           max_rates=[self.max_rate]*2)
         self.infra = single_phase_network(N=2, limit=64)
         self.rates = asa.solve(self.sessions, self.infra)
@@ -76,7 +82,10 @@ class TestTinyInfeasibleBecauseOfMaxRateNetworkEnergyEquality(TestCase):
         self.max_rate = 32
         self.energy_demand = 3.3
         asa = AdaptiveChargingOptimization(DEFAULT_OBJECTIVE, self.period, enforce_energy_equality=True)
-        self.sessions = session_generator(2, [0]*2, [12, 4], [self.energy_demand]*2,
+        self.sessions = session_generator(N=2,
+                                          arrivals=[0]*2,
+                                          departures=[12, 4],
+                                          remaining_energy=[self.energy_demand]*2,
                                           max_rates=[self.max_rate]*2)
         self.infra = single_phase_network(N=2, limit=64)
         with self.assertRaises(InfeasibilityException):
@@ -90,7 +99,10 @@ class TestTinyInfeasibleBecauseOfInfrastructureNetworkEnergyEquality(TestCase):
         self.energy_demand = 3.3
         self.horizon = 12
         asa = AdaptiveChargingOptimization(DEFAULT_OBJECTIVE, self.period, enforce_energy_equality=True)
-        self.sessions = session_generator(2, [0]*2, [self.horizon]*2, [self.energy_demand]*2,
+        self.sessions = session_generator(N=2,
+                                          arrivals=[0]*2,
+                                          departures=[self.horizon]*2,
+                                          remaining_energy=[self.energy_demand]*2,
                                           max_rates=[self.max_rate]*2)
         self.infra = single_phase_network(N=2, limit=30)
         with self.assertRaises(InfeasibilityException):
@@ -104,7 +116,10 @@ class TestTinyFeasibleNetworkDelayedStart(BaseAlgoTestScenarios):
         self.energy_demand = 3.3
         self.horizon = 12
         asa = AdaptiveChargingOptimization(DEFAULT_OBJECTIVE, self.period)
-        self.sessions = session_generator(2, [0, 4], [self.horizon, self.horizon + 4], [self.energy_demand]*2,
+        self.sessions = session_generator(N=2,
+                                          arrivals=[0, 4],
+                                          departures=[self.horizon, self.horizon + 4],
+                                          remaining_energy=[self.energy_demand]*2,
                                           max_rates=[self.max_rate]*2)
         self.infra = single_phase_network(N=2, limit=64)
         self.rates = asa.solve(self.sessions, self.infra)
@@ -117,8 +132,12 @@ class TestTinyFeasibleMultipleSessionsSameEVSE(BaseAlgoTestScenarios):
         self.energy_demand = 3.3
         self.horizon = 12
         asa = AdaptiveChargingOptimization(DEFAULT_OBJECTIVE, self.period)
-        self.sessions = session_generator(2, [0, 12], [self.horizon, self.horizon + 12], [self.energy_demand]*2,
-                                          station_ids=['0']*2,  max_rates=[self.max_rate]*2)
+        self.sessions = session_generator(N=2,
+                                          arrivals=[0, 12],
+                                          departures=[self.horizon, self.horizon + 12],
+                                          remaining_energy=[self.energy_demand]*2,
+                                          station_ids=['0']*2,
+                                          max_rates=[self.max_rate]*2)
         self.infra = single_phase_network(N=2, limit=64)
         self.rates = asa.solve(self.sessions, self.infra)
 
@@ -130,10 +149,15 @@ class TestTinyMinimumCharge(BaseAlgoTestScenarios):
         self.min_rate = 6
         self.energy_demand = 3.3
         self.horizon = 12
+        N = 2
         asa = AdaptiveChargingOptimization(DEFAULT_OBJECTIVE, self.period)
-        self.sessions = session_generator(2, [0]*2, [self.horizon]*2, [self.energy_demand]*2,
-                                          min_rates=[self.min_rate]*2, max_rates=[self.max_rate]*2)
-        self.infra = single_phase_network(N=2, limit=64)
+        self.sessions = session_generator(N=N,
+                                          arrivals=[0]*N,
+                                          departures=[self.horizon]*N,
+                                          remaining_energy=[self.energy_demand]*N,
+                                          min_rates=[self.min_rate]*N,
+                                          max_rates=[self.max_rate]*N)
+        self.infra = single_phase_network(N=N, limit=64)
         self.rates = asa.solve(self.sessions, self.infra)
 
     def test_all_rates_less_than_limit(self):
@@ -147,12 +171,16 @@ class TestTinyPeakLimitScalar(BaseAlgoTestScenarios):
         self.min_rate = 6
         self.energy_demand = 3.3
         self.horizon = 12
+        N = 2
         asa = AdaptiveChargingOptimization(DEFAULT_OBJECTIVE, self.period)
-        self.sessions = session_generator(2, [0]*2, [self.horizon]*2, [self.energy_demand]*2,
-                                          max_rates=[self.max_rate]*2)
-        self.infra = single_phase_network(N=2, limit=64)
+        self.sessions = session_generator(N=N,
+                                          arrivals=[0] * N,
+                                          departures=[self.horizon] * N,
+                                          remaining_energy=[self.energy_demand] * N,
+                                          max_rates=[self.max_rate] * N)
+        self.infra = single_phase_network(N=N, limit=64)
         self.peak_limit = 32
-        self.rates = asa.solve(self.sessions, self.infra, self.peak_limit)
+        self.rates = asa.solve(self.sessions, self.infra, peak_limit=self.peak_limit)
 
     def test_peak_less_than_limit(self):
         assert (self.rates.sum(axis=0) <= self.peak_limit + 1e-7).all()
@@ -165,12 +193,16 @@ class TestTinyPeakLimitVector(TestTinyPeakLimitScalar):
         self.min_rate = 6
         self.energy_demand = 3.3
         self.horizon = 12
+        N = 2
         asa = AdaptiveChargingOptimization(DEFAULT_OBJECTIVE, self.period)
-        self.sessions = session_generator(2, [0]*2, [self.horizon]*2, [self.energy_demand]*2,
-                                          max_rates=[self.max_rate]*2)
-        self.infra = single_phase_network(N=2, limit=64)
+        self.sessions = session_generator(N=N,
+                                          arrivals=[0] * N,
+                                          departures=[self.horizon] * N,
+                                          remaining_energy=[self.energy_demand] * N,
+                                          max_rates=[self.max_rate] * N)
+        self.infra = single_phase_network(N=N, limit=64)
         self.peak_limit = np.array([40]*6 + [24]*6)
-        self.rates = asa.solve(self.sessions, self.infra, self.peak_limit)
+        self.rates = asa.solve(self.sessions, self.infra, peak_limit=self.peak_limit)
 
 
 # Basic Stress Tests
@@ -182,8 +214,11 @@ class TestLargeFeasibleSinglePhase(BaseAlgoTestScenarios):
         self.horizon = 12*12
         N = 54
         asa = AdaptiveChargingOptimization(DEFAULT_OBJECTIVE, self.period, constraint_type='LINEAR')
-        self.sessions = session_generator(N, [0]*N, [self.horizon]*N, [self.energy_demand]*N,
-                                          max_rates=[self.max_rate]*N)
+        self.sessions = session_generator(N=N,
+                                          arrivals=[0] * N,
+                                          departures=[self.horizon] * N,
+                                          remaining_energy=[self.energy_demand] * N,
+                                          max_rates=[self.max_rate] * N)
         self.infra = single_phase_network(N, 32*N/3)
         start_time = time.time()
         self.rates = asa.solve(self.sessions, self.infra)
@@ -198,8 +233,11 @@ class TestLargeFeasibleSinglePhaseNetworkSOCConstraints(BaseAlgoTestScenarios):
         self.horizon = 12*12
         N = 54
         asa = AdaptiveChargingOptimization(DEFAULT_OBJECTIVE, self.period, constraint_type='SOC')
-        self.sessions = session_generator(N, [0]*N, [self.horizon]*N, [self.energy_demand]*N,
-                                          max_rates=[self.max_rate]*N)
+        self.sessions = session_generator(N=N,
+                                          arrivals=[0] * N,
+                                          departures=[self.horizon] * N,
+                                          remaining_energy=[self.energy_demand] * N,
+                                          max_rates=[self.max_rate] * N)
         self.infra = single_phase_network(N, 32*N/3)
         start_time = time.time()
         self.rates = asa.solve(self.sessions, self.infra)
@@ -230,8 +268,11 @@ class TestLargeFeasibleThreePhaseSOC(BaseAlgoTestScenarios):
         self.horizon = 12*12
         N = 54
         asa = AdaptiveChargingOptimization(DEFAULT_OBJECTIVE, self.period)
-        self.sessions = session_generator(N, [0]*N, [self.horizon]*N, [self.energy_demand]*N,
-                                          max_rates=[self.max_rate]*N)
+        self.sessions = session_generator(N=N,
+                                          arrivals=[0] * N,
+                                          departures=[self.horizon] * N,
+                                          remaining_energy=[self.energy_demand] * N,
+                                          max_rates=[self.max_rate] * N)
         self.infra = three_phase_balanced_network(N // 3, 32 * N / 3)
         start_time = time.time()
         self.rates = asa.solve(self.sessions, self.infra)
@@ -247,8 +288,11 @@ class TestLargeFeasibleThreePhaseWithEqualShareSOC(BaseAlgoTestScenarios):
         N = 54
         obj = [ObjectiveComponent(quick_charge), ObjectiveComponent(equal_share, 1e-12)]
         asa = AdaptiveChargingOptimization(obj, self.period)
-        self.sessions = session_generator(N, [0]*N, [self.horizon]*N, [self.energy_demand]*N,
-                                          max_rates=[self.max_rate]*N)
+        self.sessions = session_generator(N=N,
+                                          arrivals=[0] * N,
+                                          departures=[self.horizon] * N,
+                                          remaining_energy=[self.energy_demand] * N,
+                                          max_rates=[self.max_rate] * N)
         self.infra = three_phase_balanced_network(N // 3, 32 * N / 3)
         start_time = time.time()
         self.rates = asa.solve(self.sessions, self.infra)
@@ -281,12 +325,59 @@ class TestLargeFeasibleThreePhaseLinear(BaseAlgoTestScenarios):
         self.horizon = 12 * 12
         N = 54
         asa = AdaptiveChargingOptimization(DEFAULT_OBJECTIVE, self.period, constraint_type='LINEAR')
-        self.sessions = session_generator(N, [0] * N, [self.horizon] * N, [self.energy_demand] * N,
+        self.sessions = session_generator(N=N,
+                                          arrivals=[0] * N,
+                                          departures=[self.horizon] * N,
+                                          remaining_energy=[self.energy_demand] * N,
                                           max_rates=[self.max_rate] * N)
         self.infra = three_phase_balanced_network(N // 3, 32 * N / 3)
         start_time = time.time()
         self.rates = asa.solve(self.sessions, self.infra)
         print(time.time() - start_time)
+
+
+class TestTOUCostMinimizationTinyNetwork(BaseAlgoTestScenarios):
+    def setUp(self) -> None:
+        self.period = 5
+        self.max_rate = 32
+        self.energy_demand = 3.3
+        self.horizon = 12
+        objective = [ObjectiveComponent(tou_energy_cost, 1, {'current_time': 0, 'period': self.period,
+                                                             'energy_prices': np.array([0.3]*6 + [0.1]*6)})]
+        asa = AdaptiveChargingOptimization(objective, self.period, enforce_energy_equality=True)
+        self.sessions = session_generator(N=2,
+                                          arrivals=[0]*2,
+                                          departures=[self.horizon]*2,
+                                          remaining_energy=[self.energy_demand]*2,
+                                          max_rates=[self.max_rate]*2)
+        self.infra = single_phase_network(N=2, limit=64)
+        self.rates = asa.solve(self.sessions, self.infra)
+
+    def test_dont_charge_at_high_cost(self):
+        assert np.allclose(self.rates[:, :6], 0, atol=1e-3)
+
+
+class TestTOUCostMinimizationTinyNetworkNonZeroCurrentTime(BaseAlgoTestScenarios):
+    def setUp(self) -> None:
+        self.period = 5
+        self.max_rate = 32
+        self.energy_demand = 3.3
+        self.horizon = 12
+        self.current_time = 4
+        objective = [ObjectiveComponent(tou_energy_cost, 1, {'energy_prices': np.array([0.3]*6 + [0.1]*6)})]
+        asa = AdaptiveChargingOptimization(objective, self.period, enforce_energy_equality=True)
+        self.sessions = session_generator(N=2,
+                                          arrivals=[0]*2,
+                                          departures=[self.horizon]*2,
+                                          remaining_energy=[self.energy_demand]*2,
+                                          max_rates=[self.max_rate]*2,
+                                          current_time=self.current_time)
+        self.infra = single_phase_network(N=2, limit=64)
+        self.rates = asa.solve(self.sessions, self.infra, current_time=self.current_time)
+
+    def test_dont_charge_at_high_cost(self):
+        assert np.allclose(self.rates[:, :2], 0, atol=1e-3)
+        assert np.all(self.rates[:, 2:] > 1e-4)
 
 
 # Delete BaseAlgoTestScenarios since it should never be run on its own.

@@ -226,6 +226,7 @@ class TestAdaptiveChargingAlgorithmOfflineCaltechSingleDay(AdaptiveSchedulingAlg
         assert np.allclose(internal_energy_delivered, energy_requested, atol=1e-2)
 
 
+
 del AdaptiveSchedulingAlgorithmBase
 #
 #

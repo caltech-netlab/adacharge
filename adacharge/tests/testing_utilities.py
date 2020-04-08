@@ -2,13 +2,14 @@ import numpy as np
 from datatypes import SessionInfo, InfrastructureInfo
 
 
-def session_generator(N, arrivals, departures, remaining_energy, max_rates, min_rates=None, station_ids=None):
+def session_generator(N, arrivals, departures, remaining_energy, max_rates, min_rates=None, station_ids=None,
+                      current_time=0):
     sessions = []
     for i in range(N):
         station_id = station_ids[i] if station_ids is not None else f'{i}'
         session_id = f'{i}'
         min_rate = min_rates[i] if min_rates is not None else 0
-        s = SessionInfo(station_id, session_id, remaining_energy[i], 0, arrivals[i], departures[i], 0,
+        s = SessionInfo(station_id, session_id, remaining_energy[i], 0, arrivals[i], departures[i], current_time,
                         min_rate, max_rates[i])
         sessions.append(s)
     return sessions
