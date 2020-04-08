@@ -2,7 +2,7 @@ from typing import List, Union
 from collections import namedtuple
 import numpy as np
 import cvxpy as cp
-from datatypes import SessionInfo, InfrastructureInfo
+from adacharge.datatypes import SessionInfo, InfrastructureInfo
 
 
 class InfeasibilityException(Exception):

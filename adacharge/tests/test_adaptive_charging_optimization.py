@@ -1,5 +1,5 @@
 from unittest import TestCase
-from adaptive_charging_optimization import *
+from adacharge.adaptive_charging_optimization import *
 import time
 from testing_utilities import *
 
