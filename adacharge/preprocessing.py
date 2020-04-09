@@ -95,7 +95,7 @@ def apply_minimum_charging_rate(active_sessions: List[SessionInfo], infrastructu
     rates = np.zeros(len(infrastructure.evse_index))
     for j, session in enumerate(session_queue):
         i = infrastructure.evse_index.index(session.station_id)
-        rates[i] = min(infrastructure.min_pilot[session.station_id], override)
+        rates[i] = min(infrastructure.min_pilot[i], override)
         if infrastructure_constraints_feasible(rates, infrastructure):
             session.min_rates[0] = max(rates[i], session.min_rates[0])
             session_queue[j] = reconcile_max_and_min(session)

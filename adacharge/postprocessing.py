@@ -88,24 +88,24 @@ def index_based_reallocation(rates: np.ndarray, active_sessions: List[SessionInf
         np.ndarray: Schedule of charging rates with reallocation up to peak_limit during the first control period.
     """
     N = len(infrastructure.evse_index)
-    sorted_indexes = index_fn(active_sessions, key=index_fn)
-    active = rates < infrastructure.max_pilot - 1e-3
-    allowable = [infrastructure.allowable_pilots[evse_id] for evse_id in infrastructure.evse_index]
-
     energy_demands = np.zeros(N)
     for session in active_sessions:
         # Do not record energy demands for sessions not active in the first time interval.
         if session.arrival_offset == 0:
             energy_demands[infrastructure.evse_index.index(session.station_id)] = session.remaining_energy
 
+    sorted_sessions = sorted(active_sessions, key=index_fn)
+    sorted_indexes = [infrastructure.get_station_index(s.station_id) for s in sorted_sessions]
+    active = rates < (infrastructure.max_pilot - 1e-3)
     for i in cycle(sorted_indexes):
         if not np.any(active):
             break
         if active[i]:
             new_rates = deepcopy(rates)
-            new_rates[i] = ceil_to_set(rates[i], allowable[i], 0)
+            new_rates[i] = ceil_to_set(rates[i], infrastructure.allowable_pilots[i], 0)
             if np.sum(new_rates) > peak_limit and new_rates < energy_demands and \
                     infrastructure_constraints_feasible(new_rates, infrastructure):
                 rates = new_rates
             else:
                 active[i] = False
+    return rates
