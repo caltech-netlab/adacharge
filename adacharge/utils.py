@@ -1,5 +1,5 @@
 import numpy as np
-from adacharge.datatypes import InfrastructureInfo
+from datatypes import InfrastructureInfo
 
 
 def infrastructure_constraints_feasible(rates, infrastructure: InfrastructureInfo):

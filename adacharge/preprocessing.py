@@ -3,8 +3,8 @@ from copy import deepcopy
 import numpy as np
 
 from acnportal.algorithms import Rampdown
-from adacharge.datatypes import SessionInfo, InfrastructureInfo
-from adacharge.utils import infrastructure_constraints_feasible
+from datatypes import SessionInfo, InfrastructureInfo
+from utils import infrastructure_constraints_feasible
 
 
 def enforce_evse_pilot_limit(active_sessions: List[SessionInfo], infrastructure: InfrastructureInfo):

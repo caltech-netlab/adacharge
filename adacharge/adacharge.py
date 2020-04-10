@@ -2,10 +2,10 @@ from acnportal.algorithms import BaseAlgorithm, least_laxity_first
 from copy import deepcopy
 import warnings
 
-from adacharge.adaptive_charging_optimization import *
-from adacharge.preprocessing import apply_rampdown, apply_minimum_charging_rate, enforce_evse_pilot_limit
-from adacharge.postprocessing import project_into_continuous_feasible_pilots, project_into_discrete_feasible_pilots
-from adacharge.postprocessing import index_based_reallocation
+from adaptive_charging_optimization import *
+from preprocessing import apply_rampdown, apply_minimum_charging_rate, enforce_evse_pilot_limit
+from postprocessing import project_into_continuous_feasible_pilots, project_into_discrete_feasible_pilots
+from postprocessing import index_based_reallocation
 
 # ---------------------------------------------------------
 #  These utilities translate from Interface format to

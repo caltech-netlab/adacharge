@@ -2,7 +2,7 @@ from typing import List, Union
 from collections import namedtuple
 import numpy as np
 import cvxpy as cp
-from adacharge.datatypes import SessionInfo, InfrastructureInfo
+from datatypes import SessionInfo, InfrastructureInfo
 
 
 class InfeasibilityException(Exception):
@@ -51,7 +51,7 @@ class AdaptiveChargingOptimization:
             ub[i, session.arrival_offset:session.arrival_offset + session.remaining_time] = session.max_rates
         # To ensure feasibility, replace upper bound with lower bound when they conflict
         ub[ub < lb] = lb[ub < lb]
-        return [rates >= lb, rates <= ub]
+        return {'charging_rate_bounds.lb': rates >= lb, 'charging_rate_bounds.ub': rates <= ub}
 
     @staticmethod
     def energy_constraints(rates: cp.Variable, active_sessions: List[SessionInfo], infrastructure: InfrastructureInfo,
@@ -70,15 +70,16 @@ class AdaptiveChargingOptimization:
         Returns:
             List[cp.Constraint]: List of energy delivered constraints for each session.
         """
-        constraints = []
+        constraints = {}
         for session in active_sessions:
             i = infrastructure.get_station_index(session.station_id)
             planned_energy = cp.sum(rates[i, session.arrival_offset:session.arrival_offset + session.remaining_time])
             planned_energy *= infrastructure.voltages[i] * period / 1e3 / 60
+            constraint_name = f'energy_constraints.{session.session_id}'
             if enforce_energy_equality:
-                constraints.append(planned_energy == session.remaining_energy)
+                constraints[constraint_name] = planned_energy == session.remaining_energy
             else:
-                constraints.append(planned_energy <= session.remaining_energy)
+                constraints[constraint_name] = planned_energy <= session.remaining_energy
         return constraints
 
     @staticmethod
@@ -96,17 +97,19 @@ class AdaptiveChargingOptimization:
         Returns:
             List[cp.Constraint]: List of constraints, one for each bottleneck in the electrical infrastructure.
         """
-        constraints = []
+        constraints = {}
         if constraint_type == 'SOC':
             if infrastructure.phases is None:
                 raise ValueError('phases is required when using SOC infrastructure constraints.')
             phase_in_rad = np.deg2rad(infrastructure.phases)
             for j, v in enumerate(infrastructure.constraint_matrix):
                 a = np.stack([v * np.cos(phase_in_rad), v * np.sin(phase_in_rad)])
-                constraints.append(cp.norm(a @ rates, axis=0) <= infrastructure.constraint_limits[j])
+                constraint_name = f'infrastructure_constraints.{infrastructure.constraint_index[j]}'
+                constraints[constraint_name] = cp.norm(a @ rates, axis=0) <= infrastructure.constraint_limits[j]
         elif constraint_type == 'LINEAR':
             for j, v in enumerate(infrastructure.constraint_matrix):
-                constraints.append(np.abs(v) @ rates <= infrastructure.constraint_limits[j])
+                constraint_name = f'infrastructure_constraints.{infrastructure.constraint_index[j]}'
+                constraints[constraint_name] = np.abs(v) @ rates <= infrastructure.constraint_limits[j]
         else:
             raise ValueError(
                 'Invalid infrastructure constraint type: {0}. Valid options are SOC or AFFINE.'.format(constraint_type))
@@ -126,23 +129,23 @@ class AdaptiveChargingOptimization:
             List[cp.Constraint]: List of constraints, one for each bottleneck in the electrical infrastructure.
         """
         if peak_limit is not None:
-            return [cp.sum(rates, axis=0) <= peak_limit]
-        return []
+            return {'peak_constraint': cp.sum(rates, axis=0) <= peak_limit}
+        return {}
 
     def build_objective(self, rates: cp.Variable, active_sessions: List[SessionInfo], infrastructure: InfrastructureInfo,
-                        current_time: int):
-        def _merge_dicts(default_args, user_args):
-            """ Merge two dictionaries where user args override default args when their is a conflict. """
-            kwargs = dict()
-            kwargs.update(default_args)
-            kwargs.update(user_args)
-            return kwargs
+                        current_time: int, **kwargs):
+        def _merge_dicts(*args):
+            """ Merge two dictionaries where d2 override d1 when there is a conflict. """
+            merged = dict()
+            for d in args:
+                merged.update(d)
+            return merged
 
         env_args = {'period': self.period, 'current_time': current_time, 'active_sessions': active_sessions}
         obj = cp.Constant(0)
         for component in self.objective_configuration:
             obj += component.coefficient * component.function(rates, infrastructure,
-                                                              **_merge_dicts(env_args, component.kwargs))
+                                                              **_merge_dicts(env_args, kwargs, component.kwargs))
         return obj
 
     def build_problem(self, active_sessions: List[SessionInfo], infrastructure: InfrastructureInfo, current_time: int,
@@ -166,20 +169,20 @@ class AdaptiveChargingOptimization:
         num_evses = len(infrastructure.evse_index)
         rates = cp.Variable(shape=(num_evses, optimization_horizon))
 
-        constraints = []
+        constraints = {}
 
         # Rate constraints
-        constraints.extend(self.charging_rate_bounds(rates, active_sessions, infrastructure.evse_index))
+        constraints.update(self.charging_rate_bounds(rates, active_sessions, infrastructure.evse_index))
 
         # Energy Delivered Constraints
-        constraints.extend(self.energy_constraints(rates, active_sessions, infrastructure,
+        constraints.update(self.energy_constraints(rates, active_sessions, infrastructure,
                                                    self.period, self.enforce_energy_equality))
 
         # Infrastructure Constraints
-        constraints.extend(self.infrastructure_constraints(rates, infrastructure, self.constraint_type))
+        constraints.update(self.infrastructure_constraints(rates, infrastructure, self.constraint_type))
 
         # Peak Limit
-        constraints.extend(self.peak_constraint(rates, peak_limit))
+        constraints.update(self.peak_constraint(rates, peak_limit))
 
         # Objective Function
         objective = cp.Maximize(self.build_objective(rates, active_sessions, infrastructure, current_time))
@@ -188,7 +191,8 @@ class AdaptiveChargingOptimization:
                 'variables': {'rates': rates}}
 
     def solve(self, active_sessions: List[SessionInfo], infrastructure: InfrastructureInfo,
-              current_time: int = 0, peak_limit: Union[float, List[float], np.ndarray] = None):
+              current_time: int = 0, peak_limit: Union[float, List[float], np.ndarray] = None,
+              verbose: bool =False):
         """ Solve optimization problem to create a schedule of charging rates.
 
         Args:
@@ -199,7 +203,7 @@ class AdaptiveChargingOptimization:
                 Defaults to 0. (periods)
             peak_limit (Union[float, List[float], np.ndarray]): Limit on aggregate peak current. If None, no limit is
                 enforced.
-
+            verbose (bool): See cp.Problem.solve()
 
         Returns:
             np.Array: Numpy array of charging rates of shape (N, T) where N is the number of EVSEs in the network and
@@ -208,8 +212,8 @@ class AdaptiveChargingOptimization:
         """
         # Here we take in arguments which describe the problem and build a problem instance.
         problem_dict = self.build_problem(active_sessions, infrastructure, current_time, peak_limit)
-        prob = cp.Problem(problem_dict['objective'], problem_dict['constraints'])
-        prob.solve(solver=self.solver)
+        prob = cp.Problem(problem_dict['objective'], list(problem_dict['constraints'].values()))
+        prob.solve(solver=self.solver, verbose=verbose)
         if prob.status not in [cp.OPTIMAL, cp.OPTIMAL_INACCURATE]:
             raise InfeasibilityException(f'Solve failed with status {prob.status}')
         return problem_dict['variables']['rates'].value

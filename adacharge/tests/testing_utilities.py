@@ -1,5 +1,5 @@
 import numpy as np
-from adacharge.datatypes import SessionInfo, InfrastructureInfo
+from datatypes import SessionInfo, InfrastructureInfo
 
 
 def session_generator(N, arrivals, departures, remaining_energy, max_rates, min_rates=None, station_ids=None,
