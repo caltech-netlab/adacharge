@@ -149,7 +149,7 @@ class AdaptiveChargingOptimization:
         return obj
 
     def build_problem(self, active_sessions: List[SessionInfo], infrastructure: InfrastructureInfo, current_time: int,
-                      peak_limit: Union[float, List[float], np.ndarray] = None):
+                      peak_limit: Union[float, List[float], np.ndarray] = None, prev_peak: float = 0):
         """ Build parts of the optimization problem including variables, constraints, and objective function.
 
         Args:
@@ -168,7 +168,6 @@ class AdaptiveChargingOptimization:
         optimization_horizon = max(s.arrival_offset + s.remaining_time for s in active_sessions)
         num_evses = len(infrastructure.evse_index)
         rates = cp.Variable(shape=(num_evses, optimization_horizon))
-
         constraints = {}
 
         # Rate constraints
@@ -185,14 +184,15 @@ class AdaptiveChargingOptimization:
         constraints.update(self.peak_constraint(rates, peak_limit))
 
         # Objective Function
-        objective = cp.Maximize(self.build_objective(rates, active_sessions, infrastructure, current_time))
+        objective = cp.Maximize(self.build_objective(rates, active_sessions, infrastructure, current_time,
+                                                     prev_peak=prev_peak))
         return {'objective': objective,
                 'constraints': constraints,
                 'variables': {'rates': rates}}
 
     def solve(self, active_sessions: List[SessionInfo], infrastructure: InfrastructureInfo,
               current_time: int = 0, peak_limit: Union[float, List[float], np.ndarray] = None,
-              verbose: bool =False):
+              prev_peak = 0, verbose: bool = False):
         """ Solve optimization problem to create a schedule of charging rates.
 
         Args:
@@ -211,7 +211,7 @@ class AdaptiveChargingOptimization:
                 infrastructure.
         """
         # Here we take in arguments which describe the problem and build a problem instance.
-        problem_dict = self.build_problem(active_sessions, infrastructure, current_time, peak_limit)
+        problem_dict = self.build_problem(active_sessions, infrastructure, current_time, peak_limit, prev_peak)
         prob = cp.Problem(problem_dict['objective'], list(problem_dict['constraints'].values()))
         prob.solve(solver=self.solver, verbose=verbose)
         if prob.status not in [cp.OPTIMAL, cp.OPTIMAL_INACCURATE]:

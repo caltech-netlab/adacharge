@@ -114,7 +114,7 @@ class AdaptiveSchedulingAlgorithm(BaseAlgorithm):
         optimizer = AdaptiveChargingOptimization(self.objective, self.interface.period, self.constraint_type,
                                                  self.enforce_energy_equality, solver=self.solver)
         rates_matrix = optimizer.solve(active_sessions, infrastructure, current_time=self.interface.current_time,
-                                       peak_limit=self.peak_limit)
+                                       peak_limit=self.peak_limit, prev_peak=self.interface.get_prev_peak())
         if self.quantize:
             rates_matrix = project_into_discrete_feasible_pilots(rates_matrix, infrastructure)
             if self.reallocate:
