@@ -100,6 +100,11 @@ class AdaptiveChargingOptimization:
         Returns:
             List[cp.Constraint]: List of constraints, one for each bottleneck in the electrical infrastructure.
         """
+        # If constraint_matrix is empty, no need to add infrastructure
+        # constraints.
+        if infrastructure.constraint_matrix is None or \
+                infrastructure.constraint_matrix.shape == (0, 0):
+            return {}
         constraints = {}
         if constraint_type == 'SOC':
             if infrastructure.phases is None:

@@ -115,14 +115,11 @@ class AdaptiveSchedulingAlgorithm(BaseAlgorithm):
         else:
             self.max_recompute = max_recompute
 
-    def schedule(self, active_evs):
+    def schedule(self, active_sessions):
         """ See BaseAlgorithm """
-        if len(active_evs) == 0:
+        if len(active_sessions) == 0:
             return {}
         infrastructure = self.interface.infrastructure_info()
-
-        active_sessions = get_active_sessions(active_evs,
-                                              self.interface.current_time)
 
         active_sessions = enforce_pilot_limit(active_sessions,
                                                    infrastructure)
@@ -200,8 +197,11 @@ class AdaptiveChargingAlgorithmOffline(BaseAlgorithm):
             raise ValueError('Error: self.interface is None. Please register interface before calling solve.')
         infrastructure = self.interface.infrastructure_info()
         self.sessions = enforce_pilot_limit(self.sessions, infrastructure)
-        optimizer = AdaptiveChargingOptimization(self.objective, self.interface.period, self.constraint_type,
-                                                 self.enforce_energy_equality, solver=self.solver)
+        optimizer = AdaptiveChargingOptimization(self.objective,
+                                                 self.interface,
+                                                 self.constraint_type,
+                                                 self.enforce_energy_equality,
+                                                 solver=self.solver)
         rates_matrix = optimizer.solve(self.sessions, infrastructure, self.peak_limit)
         rates_matrix = project_into_continuous_feasible_pilots(rates_matrix, infrastructure)
         self.internal_schedule = {station_id: rates_matrix[i, :]
