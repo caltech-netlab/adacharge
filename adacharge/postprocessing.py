@@ -2,36 +2,66 @@ from typing import List
 import numpy as np
 from copy import deepcopy
 from itertools import cycle
-from acnportal.acnsim.interface import InfrastructureInfo, SessionInfo
+from acnportal.acnsim.interface import *
 from utils import infrastructure_constraints_feasible
 
 
 def floor_to_set(x: float, allowable_set: np.ndarray, eps=0.05):
-    """ Round x down into the allowable set.
+    """ Round x down into the allowable set. If x is less than minimum value
+        in allowable_set, clip to the minimum.
 
     Args:
         x (float): Value to round.
         allowable_set (np.ndarray): Array of the allowable values.
-        eps (float): If value is within eps of the next largest allowable value, round up, otherwise round down.
+        eps (float): If value is within eps of the next largest allowable
+            value, round up, otherwise round down.
 
     Returns:
         float: Rounded value.
     """
-    return max(allowable_set[allowable_set <= x + eps])
+    allowable_less_than = allowable_set[allowable_set <= x + eps]
+    if len(allowable_less_than) > 1:
+        return max(allowable_less_than)
+    else:
+        return min(allowable_set)
 
 
 def ceil_to_set(x: float, allowable_set: np.ndarray, eps=0.05):
-    """ Round x down into the allowable set.
+    """ Round x up into the allowable set. If x is greater than maximum value
+        in allowable_set, clip to the maximum.
 
     Args:
         x (float): Value to round.
         allowable_set (np.ndarray): Array of the allowable values.
-        eps (float): If value is within eps of the next lowest allowable value, round down, otherwise round up.
+        eps (float): If value is within eps of the next lowest allowable value,
+            round down, otherwise round up.
 
     Returns:
         float: Rounded value.
     """
-    return min(allowable_set[allowable_set >= x - eps])
+    allowable_greater_than = allowable_set[allowable_set >= x - eps]
+    if len(allowable_greater_than) > 1:
+        return min(allowable_greater_than)
+    else:
+        return max(allowable_set)
+
+
+def increment_in_set(x: float, allowable_set: np.ndarray):
+    """ Increment x to the next largest value in allowable set. If x is
+        greater than maximum value in allowable_set, clip to the maximum.
+
+    Args:
+        x (float): Value to round.
+        allowable_set (np.ndarray): Array of the allowable values.
+
+    Returns:
+        float: Rounded value.
+    """
+    allowable_greater_than = allowable_set[allowable_set > x]
+    if len(allowable_greater_than) > 1:
+        return min(allowable_greater_than)
+    else:
+        return max(allowable_set)
 
 
 def project_into_continuous_feasible_pilots(rates: np.ndarray, infrastructure: InfrastructureInfo):
@@ -46,7 +76,7 @@ def project_into_continuous_feasible_pilots(rates: np.ndarray, infrastructure: I
         np.ndarray: Rounded schedule of charging rates.
     """
     new_rates = deepcopy(rates)
-    for i, station_id in enumerate(infrastructure.station_ids):
+    for i in range(infrastructure.num_stations):
         new_rates[i] = np.minimum(rates[i], infrastructure.max_pilot[i])
     new_rates = np.maximum(new_rates, 0)
     return new_rates
@@ -64,7 +94,7 @@ def project_into_discrete_feasible_pilots(rates: np.ndarray, infrastructure: Inf
     """
     new_rates = deepcopy(rates)
     N, T = new_rates.shape
-    for i, station_id in enumerate(infrastructure.station_ids):
+    for i in range(infrastructure.num_stations):
         allowable = np.array(infrastructure.allowable_pilots[i])
         for t in range(T):
             new_rates[i, t] = floor_to_set(rates[i, t], allowable, eps=0.05)
@@ -72,17 +102,22 @@ def project_into_discrete_feasible_pilots(rates: np.ndarray, infrastructure: Inf
     return new_rates
 
 
-def index_based_reallocation(rates: np.ndarray, active_sessions: List[SessionInfo], infrastructure: InfrastructureInfo,
-                             peak_limit: float, index_fn):
-    """ Reallocate capacity for first control period up to peak_limit by incrementing the pilot signal to each EV after
-            sorting by index_fn.
+def index_based_reallocation(rates: np.ndarray,
+                             active_sessions: List[SessionInfo],
+                             infrastructure: InfrastructureInfo,
+                             peak_limit: float, sort_fn,
+                             interface: Interface):
+    """ Reallocate capacity for first control period up to peak_limit by
+        incrementing the pilot signal to each EV after sorting by index_fn.
 
     Args:
         rates (np.ndarray): Schedule of charging rates.
         active_sessions (List[SessionInfo]): List of active charging sessions.
-        infrastructure (InfrastructureInfo): Description of the charging infrastructure.
+        infrastructure (InfrastructureInfo): Description of the charging
+            infrastructure.
         peak_limit (float):
-        index_fn: Function which takes in a SessionInfo object and returns the value of the metric.
+        sort_fn: Function which takes in a SessionInfo object and returns the
+            value of the metric.
 
     Returns:
         np.ndarray: Schedule of charging rates with reallocation up to peak_limit during the first control period.
@@ -92,20 +127,25 @@ def index_based_reallocation(rates: np.ndarray, active_sessions: List[SessionInf
     for session in active_sessions:
         # Do not record energy demands for sessions not active in the first time interval.
         if session.arrival_offset == 0:
-            energy_demands[infrastructure.station_ids.index(session.station_id)] = session.remaining_demand
+            i = infrastructure.station_ids.index(session.station_id)
+            energy_demands[i] = interface.remaining_amp_periods(session)
 
-    sorted_sessions = sorted(active_sessions, key=index_fn)
+    sorted_sessions = sort_fn(active_sessions, interface)
+    # sorted_sessions = sorted(active_sessions, key=sort_fn)
     sorted_indexes = [infrastructure.get_station_index(s.station_id) for s in sorted_sessions]
-    active = rates < (infrastructure.max_pilot - 1e-3)
+    active = rates[:, 0] < (infrastructure.max_pilot - 1e-3)
     for i in cycle(sorted_indexes):
         if not np.any(active):
             break
         if active[i]:
-            new_rates = deepcopy(rates)
-            new_rates[i] = ceil_to_set(rates[i], infrastructure.allowable_pilots[i], 0)
-            if np.sum(new_rates) > peak_limit and new_rates < energy_demands and \
-                    infrastructure_constraints_feasible(new_rates, infrastructure):
-                rates = new_rates
+            new_rates = deepcopy(rates[:, 0])
+            new_rates[i] = increment_in_set(rates[i, 0],
+                                            infrastructure.allowable_pilots[i])
+            if np.sum(new_rates) <= peak_limit and \
+                    new_rates[i] < energy_demands[i] and \
+                    infrastructure_constraints_feasible(new_rates,
+                                                        infrastructure):
+                rates[:, 0] = new_rates
             else:
                 active[i] = False
     return rates
