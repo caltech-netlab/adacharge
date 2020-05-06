@@ -1,5 +1,5 @@
 import numpy as np
-from datatypes import InfrastructureInfo
+from acnportal.acnsim.interface import InfrastructureInfo
 
 
 def infrastructure_constraints_feasible(rates, infrastructure: InfrastructureInfo):
