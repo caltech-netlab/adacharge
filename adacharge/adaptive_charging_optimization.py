@@ -2,7 +2,7 @@ from typing import List, Union
 from collections import namedtuple
 import numpy as np
 import cvxpy as cp
-from datatypes import SessionInfo, InfrastructureInfo
+from acnportal.acnsim.interface import Interface, SessionInfo, InfrastructureInfo
 
 
 class InfeasibilityException(Exception):
@@ -16,15 +16,17 @@ class AdaptiveChargingOptimization:
     """ Base class for all MPC based charging algorithms.
 
     Args:
+        objective (List[ObjectiveComponent]): List of components which make up the optimization objective.
+        interface (Interface): Interface providing information used by the algorithm.
         constraint_type (str): String representing which constraint type to use. Options are 'SOC' for Second Order Cone
             or 'LINEAR' for linearized constraints.
         enforce_energy_equality (bool): If True, energy delivered must be equal to energy requested for each EV.
             If False, energy delivered must be less than or equal to request.
         solver (str): Backend solver to use. See CVXPY for available solvers.
     """
-    def __init__(self, objective: List[ObjectiveComponent], period, constraint_type='SOC',
+    def __init__(self, objective: List[ObjectiveComponent], interface: Interface, constraint_type='SOC',
                  enforce_energy_equality=False, solver='ECOS'):
-        self.period = period
+        self.interface = interface
         self.constraint_type = constraint_type
         self.enforce_energy_equality = enforce_energy_equality
         self.solver = solver
@@ -62,8 +64,9 @@ class AdaptiveChargingOptimization:
             rates (cp.Variable): cvxpy variable representing all charging rates. Shape should be (N, T) where N is the
                 total number of EVSEs in the system and T is the length of the optimization horizon.
             active_sessions (List[SessionInfo]): List of SessionInfo objects for all active charging sessions.
-            evse_index (List[str]): List of IDs for all EVSEs. Index in evse_index represents the row number of that
-                EVSE in rates.
+            infrastructure (InfrastructureInfo): InfrastructureInfo object describing the electrical infrastructure at
+                a site.
+            period (int): Length of each discrete time period. (min)
             enforce_energy_equality (bool): If True, energy delivered must be equal to energy requested for each EV.
                 If False, energy delivered must be less than or equal to request.
 
@@ -77,9 +80,9 @@ class AdaptiveChargingOptimization:
             planned_energy *= infrastructure.voltages[i] * period / 1e3 / 60
             constraint_name = f'energy_constraints.{session.session_id}'
             if enforce_energy_equality:
-                constraints[constraint_name] = planned_energy == session.remaining_energy
+                constraints[constraint_name] = planned_energy == session.remaining_demand
             else:
-                constraints[constraint_name] = planned_energy <= session.remaining_energy
+                constraints[constraint_name] = planned_energy <= session.remaining_demand
         return constraints
 
     @staticmethod
@@ -104,11 +107,12 @@ class AdaptiveChargingOptimization:
             phase_in_rad = np.deg2rad(infrastructure.phases)
             for j, v in enumerate(infrastructure.constraint_matrix):
                 a = np.stack([v * np.cos(phase_in_rad), v * np.sin(phase_in_rad)])
-                constraint_name = f'infrastructure_constraints.{infrastructure.constraint_index[j]}'
+                constraint_name = f'infrastructure_constraints.' \
+                                  f'{infrastructure.constraint_ids[j]}'
                 constraints[constraint_name] = cp.norm(a @ rates, axis=0) <= infrastructure.constraint_limits[j]
         elif constraint_type == 'LINEAR':
             for j, v in enumerate(infrastructure.constraint_matrix):
-                constraint_name = f'infrastructure_constraints.{infrastructure.constraint_index[j]}'
+                constraint_name = f'infrastructure_constraints.{infrastructure.constraint_ids[j]}'
                 constraints[constraint_name] = np.abs(v) @ rates <= infrastructure.constraint_limits[j]
         else:
             raise ValueError(
@@ -132,24 +136,21 @@ class AdaptiveChargingOptimization:
             return {'peak_constraint': cp.sum(rates, axis=0) <= peak_limit}
         return {}
 
-    def build_objective(self, rates: cp.Variable, active_sessions: List[SessionInfo], infrastructure: InfrastructureInfo,
-                        current_time: int, **kwargs):
+    def build_objective(self, rates: cp.Variable, infrastructure: InfrastructureInfo, **kwargs):
         def _merge_dicts(*args):
             """ Merge two dictionaries where d2 override d1 when there is a conflict. """
             merged = dict()
             for d in args:
                 merged.update(d)
             return merged
-
-        env_args = {'period': self.period, 'current_time': current_time, 'active_sessions': active_sessions}
         obj = cp.Constant(0)
         for component in self.objective_configuration:
-            obj += component.coefficient * component.function(rates, infrastructure,
-                                                              **_merge_dicts(env_args, kwargs, component.kwargs))
+            obj += component.coefficient * component.function(rates, infrastructure, self.interface,
+                                                              **_merge_dicts(kwargs, component.kwargs))
         return obj
 
-    def build_problem(self, active_sessions: List[SessionInfo], infrastructure: InfrastructureInfo, current_time: int,
-                      peak_limit: Union[float, List[float], np.ndarray] = None, prev_peak: float = 0):
+    def build_problem(self, active_sessions: List[SessionInfo], infrastructure: InfrastructureInfo,
+                      peak_limit:Union[float, List[float], np.ndarray]=None, prev_peak:float=0):
         """ Build parts of the optimization problem including variables, constraints, and objective function.
 
         Args:
@@ -158,6 +159,7 @@ class AdaptiveChargingOptimization:
                 a site.
             peak_limit (Union[float, List[float], np.ndarray]): Limit on aggregate peak current. If None, no limit is
                 enforced.
+            prev_peak (float): Previous peak current draw during the current billing period.
 
         Returns:
             Dict[str: object]:
@@ -166,16 +168,17 @@ class AdaptiveChargingOptimization:
                 'variables': dict mapping variable name to cvxpy Variable.
         """
         optimization_horizon = max(s.arrival_offset + s.remaining_time for s in active_sessions)
-        num_evses = len(infrastructure.evse_index)
+        num_evses = len(infrastructure.station_ids)
         rates = cp.Variable(shape=(num_evses, optimization_horizon))
         constraints = {}
 
         # Rate constraints
-        constraints.update(self.charging_rate_bounds(rates, active_sessions, infrastructure.evse_index))
+        constraints.update(self.charging_rate_bounds(rates, active_sessions,
+                                                     infrastructure.station_ids))
 
         # Energy Delivered Constraints
         constraints.update(self.energy_constraints(rates, active_sessions, infrastructure,
-                                                   self.period, self.enforce_energy_equality))
+                                                   self.interface.period, self.enforce_energy_equality))
 
         # Infrastructure Constraints
         constraints.update(self.infrastructure_constraints(rates, infrastructure, self.constraint_type))
@@ -184,14 +187,13 @@ class AdaptiveChargingOptimization:
         constraints.update(self.peak_constraint(rates, peak_limit))
 
         # Objective Function
-        objective = cp.Maximize(self.build_objective(rates, active_sessions, infrastructure, current_time,
-                                                     prev_peak=prev_peak))
+        objective = cp.Maximize(self.build_objective(rates, infrastructure, prev_peak=prev_peak))
         return {'objective': objective,
                 'constraints': constraints,
                 'variables': {'rates': rates}}
 
     def solve(self, active_sessions: List[SessionInfo], infrastructure: InfrastructureInfo,
-              current_time: int = 0, peak_limit: Union[float, List[float], np.ndarray] = None,
+              peak_limit: Union[float, List[float], np.ndarray] = None,
               prev_peak = 0, verbose: bool = False):
         """ Solve optimization problem to create a schedule of charging rates.
 
@@ -199,8 +201,6 @@ class AdaptiveChargingOptimization:
             active_sessions (List[SessionInfo]): List of SessionInfo objects for all active charging sessions.
             infrastructure (InfrastructureInfo): InfrastructureInfo object describing the electrical infrastructure at
                 a site.
-            current_time (int): Time when the optimizer is called. Useful for syncing with prices and external signals.
-                Defaults to 0. (periods)
             peak_limit (Union[float, List[float], np.ndarray]): Limit on aggregate peak current. If None, no limit is
                 enforced.
             verbose (bool): See cp.Problem.solve()
@@ -211,7 +211,7 @@ class AdaptiveChargingOptimization:
                 infrastructure.
         """
         # Here we take in arguments which describe the problem and build a problem instance.
-        problem_dict = self.build_problem(active_sessions, infrastructure, current_time, peak_limit, prev_peak)
+        problem_dict = self.build_problem(active_sessions, infrastructure, peak_limit, prev_peak)
         prob = cp.Problem(problem_dict['objective'], list(problem_dict['constraints'].values()))
         prob.solve(solver=self.solver, verbose=verbose)
         if prob.status not in [cp.OPTIMAL, cp.OPTIMAL_INACCURATE]:
@@ -268,33 +268,33 @@ def get_period_energy(rates, infrastructure, period, **kwargs):
     return power * period_in_hours
 
 
-def aggregate_period_energy(rates, infrastructure, period, **kwargs):
+def aggregate_period_energy(rates, infrastructure, interface, **kwargs):
     """ Returns the aggregate energy delivered in kWh during each time period. """
     # get charging rates in kWh per period
-    energy_per_period = get_period_energy(rates, infrastructure=infrastructure, period=period)
+    energy_per_period = get_period_energy(rates, infrastructure=infrastructure, period=interface.period)
     return cp.sum(energy_per_period, axis=0)
 
 
-def quick_charge(rates, infrastructure, **kwargs):
+def quick_charge(rates, infrastructure, interface, **kwargs):
     optimization_horizon = rates.shape[1]
     c = np.array([(optimization_horizon - t) / optimization_horizon for t in range(optimization_horizon)])
     return c @ cp.sum(rates, axis=0)
 
 
-def equal_share(rates, infrastructure, **kwargs):
+def equal_share(rates, infrastructure, interface, **kwargs):
     return -cp.sum_squares(rates)
 
 
-def tou_energy_cost(rates, infrastructure, period, energy_prices, current_time, **kwargs):
-    current_prices = energy_prices[current_time: current_time + rates.shape[1]]
-    return -current_prices @ aggregate_period_energy(rates, infrastructure, period)
+def tou_energy_cost(rates, infrastructure, interface, **kwargs):
+    current_prices = interface.get_prices(rates.shape[1])    # $/kWh
+    return -current_prices @ aggregate_period_energy(rates, infrastructure, interface)
 
 
-def total_energy(rates, infrastructure, period, **kwargs):
-    return cp.sum(get_period_energy(rates, infrastructure, period))
+def total_energy(rates, infrastructure, interface, **kwargs):
+    return cp.sum(get_period_energy(rates, infrastructure, interface.period))
 
 
-def peak(rates, infrastructure, baseline_peak=0, **kwargs):
+def peak(rates, infrastructure, interface, baseline_peak=0, **kwargs):
     agg_power = aggregate_power(rates, infrastructure)
     max_power = cp.max(agg_power)
     if baseline_peak > 0:
@@ -303,7 +303,7 @@ def peak(rates, infrastructure, baseline_peak=0, **kwargs):
         return max_power
 
 
-def load_flattening(rates, infrastructure, external_signal=None, **kwargs):
+def load_flattening(rates, infrastructure, interface, external_signal=None, **kwargs):
     if external_signal is None:
         external_signal = np.zeros(rates.shape[1])
     aggregate_rates_kW = aggregate_power(rates, infrastructure)

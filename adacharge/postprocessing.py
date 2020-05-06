@@ -2,7 +2,7 @@ from typing import List
 import numpy as np
 from copy import deepcopy
 from itertools import cycle
-from datatypes import InfrastructureInfo, SessionInfo
+from acnportal.acnsim.interface import InfrastructureInfo, SessionInfo
 from utils import infrastructure_constraints_feasible
 
 
@@ -46,7 +46,7 @@ def project_into_continuous_feasible_pilots(rates: np.ndarray, infrastructure: I
         np.ndarray: Rounded schedule of charging rates.
     """
     new_rates = deepcopy(rates)
-    for i, station_id in enumerate(infrastructure.evse_index):
+    for i, station_id in enumerate(infrastructure.station_ids):
         new_rates[i] = np.minimum(rates[i], infrastructure.max_pilot[i])
     new_rates = np.maximum(new_rates, 0)
     return new_rates
@@ -64,7 +64,7 @@ def project_into_discrete_feasible_pilots(rates: np.ndarray, infrastructure: Inf
     """
     new_rates = deepcopy(rates)
     N, T = new_rates.shape
-    for i, station_id in enumerate(infrastructure.evse_index):
+    for i, station_id in enumerate(infrastructure.station_ids):
         allowable = np.array(infrastructure.allowable_pilots[i])
         for t in range(T):
             new_rates[i, t] = floor_to_set(rates[i, t], allowable, eps=0.05)
@@ -87,12 +87,12 @@ def index_based_reallocation(rates: np.ndarray, active_sessions: List[SessionInf
     Returns:
         np.ndarray: Schedule of charging rates with reallocation up to peak_limit during the first control period.
     """
-    N = len(infrastructure.evse_index)
+    N = len(infrastructure.station_ids)
     energy_demands = np.zeros(N)
     for session in active_sessions:
         # Do not record energy demands for sessions not active in the first time interval.
         if session.arrival_offset == 0:
-            energy_demands[infrastructure.evse_index.index(session.station_id)] = session.remaining_energy
+            energy_demands[infrastructure.station_ids.index(session.station_id)] = session.remaining_demand
 
     sorted_sessions = sorted(active_sessions, key=index_fn)
     sorted_indexes = [infrastructure.get_station_index(s.station_id) for s in sorted_sessions]
