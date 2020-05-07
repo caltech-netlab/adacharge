@@ -115,6 +115,25 @@ class AdaptiveSchedulingAlgorithm(BaseAlgorithm):
         else:
             self.max_recompute = max_recompute
 
+    def register_interface(self, interface):
+        """ Register interface to the _simulator/physical system.
+
+        This interface is the only connection between the algorithm and what it
+            is controlling. Its purpose is to abstract the underlying
+            network so that the same algorithms can run on a simulated
+            environment or a physical one.
+
+        Args:
+            interface (Interface): An interface to the underlying network
+                whether simulated or real.
+
+        Returns:
+            None
+        """
+        self._interface = interface
+        if self.max_rate_estimator is not None:
+            self.max_rate_estimator.register_interface(interface)
+
     def schedule(self, active_sessions):
         """ See BaseAlgorithm """
         if len(active_sessions) == 0:
