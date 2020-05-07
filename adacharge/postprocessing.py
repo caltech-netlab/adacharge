@@ -1,3 +1,4 @@
+import bisect
 from typing import List
 import numpy as np
 from copy import deepcopy
@@ -19,11 +20,15 @@ def floor_to_set(x: float, allowable_set: np.ndarray, eps=0.05):
     Returns:
         float: Rounded value.
     """
-    allowable_less_than = allowable_set[allowable_set <= x + eps]
-    if len(allowable_less_than) > 1:
-        return max(allowable_less_than)
-    else:
-        return min(allowable_set)
+    pos = bisect.bisect_left(allowable_set, x + eps)
+    if pos < len(allowable_set):
+        if x == allowable_set[pos]:
+            return x
+    if pos == 0:
+        return allowable_set[0]
+    if pos == len(allowable_set):
+        return allowable_set[-1]
+    return allowable_set[pos - 1]
 
 
 def ceil_to_set(x: float, allowable_set: np.ndarray, eps=0.05):
@@ -39,11 +44,15 @@ def ceil_to_set(x: float, allowable_set: np.ndarray, eps=0.05):
     Returns:
         float: Rounded value.
     """
-    allowable_greater_than = allowable_set[allowable_set >= x - eps]
-    if len(allowable_greater_than) > 1:
-        return min(allowable_greater_than)
-    else:
-        return max(allowable_set)
+    pos = bisect.bisect_right(allowable_set, x - eps)
+    if pos > 0:
+        if x == allowable_set[pos-1]:
+            return x
+    if pos == 0:
+        return allowable_set[0]
+    if pos == len(allowable_set):
+        return allowable_set[-1]
+    return allowable_set[pos]
 
 
 def increment_in_set(x: float, allowable_set: np.ndarray):
@@ -57,11 +66,12 @@ def increment_in_set(x: float, allowable_set: np.ndarray):
     Returns:
         float: Rounded value.
     """
-    allowable_greater_than = allowable_set[allowable_set > x]
-    if len(allowable_greater_than) > 1:
-        return min(allowable_greater_than)
-    else:
-        return max(allowable_set)
+    pos = bisect.bisect_right(allowable_set, x)
+    if pos == 0:
+        return allowable_set[0]
+    if pos == len(allowable_set):
+        return allowable_set[-1]
+    return allowable_set[pos]
 
 
 def project_into_continuous_feasible_pilots(rates: np.ndarray, infrastructure: InfrastructureInfo):
@@ -82,12 +92,15 @@ def project_into_continuous_feasible_pilots(rates: np.ndarray, infrastructure: I
     return new_rates
 
 
-def project_into_discrete_feasible_pilots(rates: np.ndarray, infrastructure: InfrastructureInfo):
-    """ Project all values in rates such that they are take one of the allowable pilots for the corresponding EVSE.
+def project_into_discrete_feasible_pilots(rates: np.ndarray,
+                                          infrastructure: InfrastructureInfo):
+    """ Project all values in rates such that they are take one of the
+        allowable pilots for the corresponding EVSE.
 
     Args:
         rates (np.ndarray): Schedule of charging rates.
-        infrastructure (InfrastructureInfo): Description of the charging infrastructure.
+        infrastructure (InfrastructureInfo): Description of the charging
+            infrastructure.
 
     Returns:
         np.ndarray: Rounded schedule of charging rates.
@@ -122,27 +135,33 @@ def index_based_reallocation(rates: np.ndarray,
     Returns:
         np.ndarray: Schedule of charging rates with reallocation up to peak_limit during the first control period.
     """
-    N = len(infrastructure.station_ids)
-    energy_demands = np.zeros(N)
+    sorted_sessions = sort_fn(active_sessions, interface)
+    sorted_indexes = [infrastructure.get_station_index(s.station_id) for s in sorted_sessions]
+    active = np.zeros(infrastructure.num_stations, dtype=bool)
+    ub = np.zeros(infrastructure.num_stations)
     for session in active_sessions:
-        # Do not record energy demands for sessions not active in the first time interval.
+        # Do not record energy demands for sessions not active in the first
+        # time interval, as these could be future sessions at the same station.
         if session.arrival_offset == 0:
             i = infrastructure.station_ids.index(session.station_id)
-            energy_demands[i] = interface.remaining_amp_periods(session)
+            active[i] = True
+            ub[i] = min([interface.remaining_amp_periods(session),
+                         session.max_rates[0],
+                         infrastructure.max_pilot[i]])
 
-    sorted_sessions = sort_fn(active_sessions, interface)
-    # sorted_sessions = sorted(active_sessions, key=sort_fn)
-    sorted_indexes = [infrastructure.get_station_index(s.station_id) for s in sorted_sessions]
-    active = rates[:, 0] < (infrastructure.max_pilot - 1e-3)
     for i in cycle(sorted_indexes):
         if not np.any(active):
             break
+
         if active[i]:
+            if rates[i, 0] >= ub[i]:
+                active[i] = False
+                continue
             new_rates = deepcopy(rates[:, 0])
             new_rates[i] = increment_in_set(rates[i, 0],
                                             infrastructure.allowable_pilots[i])
             if np.sum(new_rates) <= peak_limit and \
-                    new_rates[i] < energy_demands[i] and \
+                    new_rates[i] <= ub[i] and \
                     infrastructure_constraints_feasible(new_rates,
                                                         infrastructure):
                 rates[:, 0] = new_rates

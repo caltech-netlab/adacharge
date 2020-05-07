@@ -16,6 +16,11 @@ class TestFloorToSet(TestCase):
         x_prime = floor_to_set(x, np.array([0, 5, 10]))
         self.assertEqual(x_prime, x)
 
+    def test_x_in_set_eps_0(self):
+        x = 5
+        x_prime = floor_to_set(x, np.array([0, 5, 10]), eps=0)
+        self.assertEqual(x_prime, x)
+
     def test_round_down(self):
         x = 4.9
         x_prime = floor_to_set(x, np.array([0, 5, 10]), eps=0.05)
@@ -41,6 +46,11 @@ class TestCeilToSet(TestCase):
     def test_x_in_set(self):
         x = 5
         x_prime = ceil_to_set(x, np.array([0, 5, 10]))
+        self.assertEqual(x_prime, x)
+
+    def test_x_in_set_eps_0(self):
+        x = 5
+        x_prime = ceil_to_set(x, np.array([0, 5, 10]), eps=0)
         self.assertEqual(x_prime, x)
 
     def test_round_up(self):

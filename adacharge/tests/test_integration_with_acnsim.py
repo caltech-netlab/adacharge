@@ -138,45 +138,45 @@ class TestACACaltechSingleDayQuantized(AdaptiveSchedulingAlgorithmBase):
             assert np.all(np.isin(pilot, cls.sim.network._EVSEs[ev.station_id].allowable_pilot_signals))
 
 
-# class TestACACaltechSingleDayQuantizedReallocated(AdaptiveSchedulingAlgorithmBase):
-#     @classmethod
-#     def setUpClass(cls) -> None:
-#         API_KEY = 'DEMO_TOKEN'
-#         tz = pytz.timezone('America/Los_Angeles')
-#         period = 5  # minutes
-#         voltage = 208  # volts
-#         default_battery_power = 32 * voltage / 1000  # kW
-#         site = 'caltech'
-#         basic_evse = False
-#         start = '9-01-2018'
-#         end = '9-02-2018'
-#         force_feasible = True
-#
-#         start_time = tz.localize(datetime.strptime(start, '%m-%d-%Y'))
-#         end_time = tz.localize(datetime.strptime(end, '%m-%d-%Y'))
-#
-#         events = acnsim.acndata_events.generate_events(API_KEY, site, start_time, end_time, period, voltage,
-#                                                        default_battery_power, force_feasible=force_feasible)
-#         cn = acnsim.network.sites.caltech_acn(basic_evse=basic_evse, voltage=voltage)
-#         quick_charge_obj = [ObjectiveComponent(quick_charge), ObjectiveComponent(equal_share, 1e-12)]
-#
-#         cls.alg = AdaptiveSchedulingAlgorithm(quick_charge_obj, solver=cp.ECOS, quantize=True, reallocate=True)
-#         cls.sim = acnsim.Simulator(cn, cls.alg, events, start_time, period=period, verbose=False)
-#         cls.sim.run()
-#
-#     @classmethod
-#     def test_all_energy_demands_met(cls):
-#         # Because of quantization we need to relax the energy delivered requirement
-#         assert acnsim.analysis.proportion_of_energy_delivered(cls.sim) >= .99
-#
-#     @classmethod
-#     def test_all_rates_in_allowable(cls):
-#         eps = 1e-3
-#         station_ids = cls.sim.network.station_ids
-#         for ev in cls.sim.ev_history.values():
-#             i = station_ids.index(ev.station_id)
-#             pilot = cls.sim.pilot_signals[i, ev.arrival: ev.departure]
-#             assert np.all(np.isin(pilot, cls.sim.network._EVSEs[ev.station_id].allowable_pilot_signals))
+class TestACACaltechSingleDayQuantizedReallocated(AdaptiveSchedulingAlgorithmBase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        API_KEY = 'DEMO_TOKEN'
+        tz = pytz.timezone('America/Los_Angeles')
+        period = 5  # minutes
+        voltage = 208  # volts
+        default_battery_power = 32 * voltage / 1000  # kW
+        site = 'caltech'
+        basic_evse = False
+        start = '9-01-2018'
+        end = '9-02-2018'
+        force_feasible = True
+
+        start_time = tz.localize(datetime.strptime(start, '%m-%d-%Y'))
+        end_time = tz.localize(datetime.strptime(end, '%m-%d-%Y'))
+
+        events = acnsim.acndata_events.generate_events(API_KEY, site, start_time, end_time, period, voltage,
+                                                       default_battery_power, force_feasible=force_feasible)
+        cn = acnsim.network.sites.caltech_acn(basic_evse=basic_evse, voltage=voltage)
+        quick_charge_obj = [ObjectiveComponent(quick_charge), ObjectiveComponent(equal_share, 1e-12)]
+
+        cls.alg = AdaptiveSchedulingAlgorithm(quick_charge_obj, solver=cp.ECOS, quantize=True, reallocate=True)
+        cls.sim = acnsim.Simulator(cn, cls.alg, events, start_time, period=period, verbose=False)
+        cls.sim.run()
+
+    @classmethod
+    def test_all_energy_demands_met(cls):
+        # Because of quantization we need to relax the energy delivered requirement
+        assert acnsim.analysis.proportion_of_energy_delivered(cls.sim) >= .99
+
+    @classmethod
+    def test_all_rates_in_allowable(cls):
+        eps = 1e-3
+        station_ids = cls.sim.network.station_ids
+        for ev in cls.sim.ev_history.values():
+            i = station_ids.index(ev.station_id)
+            pilot = cls.sim.pilot_signals[i, ev.arrival: ev.departure]
+            assert np.all(np.isin(pilot, cls.sim.network._EVSEs[ev.station_id].allowable_pilot_signals))
 
 # -------------------------------------------------------------
 #  Offline Algorithm

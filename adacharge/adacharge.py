@@ -142,16 +142,16 @@ class AdaptiveSchedulingAlgorithm(BaseAlgorithm):
                                        peak_limit=self.peak_limit,
                                        prev_peak=self.interface.get_prev_peak())
         if self.quantize:
+            target_peak = rates_matrix[:, 0].sum()
             rates_matrix = project_into_discrete_feasible_pilots(rates_matrix,
                                                                  infrastructure)
             if self.reallocate:
-                target_peak = rates_matrix[:, 0].sum()
-                index_fn = lambda x: x.remaining_time
-                rates_matrix[:,0] = index_based_reallocation(rates_matrix[:,0],
-                                                              active_sessions,
-                                                              infrastructure,
-                                                              target_peak,
-                                                              index_fn)
+                rates_matrix = index_based_reallocation(rates_matrix,
+                                                        active_sessions,
+                                                        infrastructure,
+                                                        target_peak,
+                                                        least_laxity_first,
+                                                        self.interface)
         else:
             rates_matrix = project_into_continuous_feasible_pilots(rates_matrix,
                                                                    infrastructure)
