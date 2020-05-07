@@ -4,7 +4,8 @@ import warnings
 
 from adaptive_charging_optimization import *
 from acnportal.algorithms import apply_upper_bound_estimate, \
-    apply_minimum_charging_rate, enforce_pilot_limit
+    apply_minimum_charging_rate, enforce_pilot_limit, \
+    inc_remaining_energy_to_min_allowable
 from postprocessing import project_into_continuous_feasible_pilots, project_into_discrete_feasible_pilots
 from postprocessing import index_based_reallocation
 
@@ -65,8 +66,8 @@ class AdaptiveSchedulingAlgorithm(BaseAlgorithm):
                  enforce_energy_equality=False, solver=None, peak_limit=None,
                  estimate_max_rate=False, max_rate_estimator=None,
                  uninterrupted_charging=False, quantize=False,
-                 reallocate=False,
-                 max_recompute=None):
+                 reallocate=False, max_recompute=None,
+                 allow_overcharging=False):
         """ Model Predictive Control based Adaptive Schedule Algorithm compatible with BaseAlgorithm.
 
         Args:
@@ -92,6 +93,9 @@ class AdaptiveSchedulingAlgorithm(BaseAlgorithm):
                 post-processing step.
             max_recompute (int): Maximum number of control periods between
                 optimization solves.
+            allow_overcharging (bool): Allow the algorithm to exceed the energy
+                request of the session by at most the energy delivered at the
+                minimum allowable rate for one period.
         """
         super().__init__()
         self.objective = objective
@@ -114,6 +118,7 @@ class AdaptiveSchedulingAlgorithm(BaseAlgorithm):
             self.max_recompute = 1
         else:
             self.max_recompute = max_recompute
+        self.allow_overcharging = allow_overcharging
 
     def register_interface(self, interface):
         """ Register interface to the _simulator/physical system.
@@ -149,6 +154,9 @@ class AdaptiveSchedulingAlgorithm(BaseAlgorithm):
         if self.uninterrupted_charging:
             active_sessions = apply_minimum_charging_rate(active_sessions,
                                                           infrastructure)
+        if self.allow_overcharging:
+            active_sessions = inc_remaining_energy_to_min_allowable(
+                active_sessions, infrastructure, self.interface.period)
 
         optimizer = AdaptiveChargingOptimization(self.objective,
                                                  self.interface,
