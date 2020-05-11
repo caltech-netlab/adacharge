@@ -4,10 +4,9 @@ import warnings
 
 from adaptive_charging_optimization import *
 from acnportal.algorithms import apply_upper_bound_estimate, \
-    apply_minimum_charging_rate, enforce_pilot_limit, \
-    inc_remaining_energy_to_min_allowable
+    apply_minimum_charging_rate, enforce_pilot_limit
 from postprocessing import project_into_continuous_feasible_pilots, project_into_discrete_feasible_pilots
-from postprocessing import index_based_reallocation
+from postprocessing import index_based_reallocation, diff_based_reallocation
 
 # ---------------------------------------------------------
 #  These utilities translate from Interface format to
@@ -153,10 +152,8 @@ class AdaptiveSchedulingAlgorithm(BaseAlgorithm):
                                              active_sessions)
         if self.uninterrupted_charging:
             active_sessions = apply_minimum_charging_rate(active_sessions,
-                                                          infrastructure)
-        if self.allow_overcharging:
-            active_sessions = inc_remaining_energy_to_min_allowable(
-                active_sessions, infrastructure, self.interface.period)
+                                                          infrastructure,
+                                                          self.interface)
 
         optimizer = AdaptiveChargingOptimization(self.objective,
                                                  self.interface,
@@ -169,16 +166,14 @@ class AdaptiveSchedulingAlgorithm(BaseAlgorithm):
                                        peak_limit=self.peak_limit,
                                        prev_peak=self.interface.get_prev_peak())
         if self.quantize:
-            target_peak = rates_matrix[:, 0].sum()
-            rates_matrix = project_into_discrete_feasible_pilots(rates_matrix,
-                                                                 infrastructure)
             if self.reallocate:
-                rates_matrix = index_based_reallocation(rates_matrix,
-                                                        active_sessions,
-                                                        infrastructure,
-                                                        target_peak,
-                                                        least_laxity_first,
-                                                        self.interface)
+                rates_matrix = diff_based_reallocation(rates_matrix,
+                                                       active_sessions,
+                                                       infrastructure,
+                                                       self.interface)
+            else:
+                rates_matrix = project_into_discrete_feasible_pilots(rates_matrix,
+                                                                     infrastructure)
         else:
             rates_matrix = project_into_continuous_feasible_pilots(rates_matrix,
                                                                    infrastructure)
