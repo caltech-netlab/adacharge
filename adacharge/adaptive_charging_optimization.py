@@ -216,6 +216,8 @@ class AdaptiveChargingOptimization:
                 infrastructure.
         """
         # Here we take in arguments which describe the problem and build a problem instance.
+        if len(active_sessions) == 0:
+            return np.zeros((infrastructure.num_stations, 1))
         problem_dict = self.build_problem(active_sessions, infrastructure, peak_limit, prev_peak)
         prob = cp.Problem(problem_dict['objective'], list(problem_dict['constraints'].values()))
         prob.solve(solver=self.solver, verbose=verbose)

@@ -190,7 +190,6 @@ class AdaptiveChargingAlgorithmOffline(BaseAlgorithm):
 
     Args:
         objective (List[ObjectiveComponent]): List of ObjectiveComponents for the optimization.
-        events (List[Event-like]): List of events which will occur. Only Plugin events are considered.
         constraint_type (str): String representing which constraint type to use. Options are 'SOC' for Second Order Cone
             or 'LINEAR' for linearized constraints.
         enforce_energy_equality (bool): If True, energy delivered must be equal to energy requested for each EV.
@@ -199,7 +198,7 @@ class AdaptiveChargingAlgorithmOffline(BaseAlgorithm):
         peak_limit (Union[float, List[float], np.ndarray]): Limit on aggregate peak current. If None, no limit is
             enforced.
     """
-    def __init__(self, objective, events, constraint_type='SOC', enforce_energy_equality=False, solver=None,
+    def __init__(self, objective, constraint_type='SOC', enforce_energy_equality=False, solver=None,
                  peak_limit=None):
         super().__init__()
         self.max_recompute = 1
@@ -208,15 +207,29 @@ class AdaptiveChargingAlgorithmOffline(BaseAlgorithm):
         self.enforce_energy_equality = enforce_energy_equality
         self.solver = solver
         self.peak_limit = peak_limit
+        self.sessions = None
+        self.session_ids = None
+        self.internal_schedule = None
 
-        active_evs = [deepcopy(event[1].ev) for event in events.queue if event[1].event_type == 'Plugin']
+    def register_events(self, events):
+        """ Register events.
+
+        Args:
+            events (List[Event-like]): List of events which will occur.
+                Only Plugin events are considered.
+        """
+        active_evs = [deepcopy(event[1].ev) for event in events.queue
+                      if event[1].event_type == 'Plugin']
         self.sessions = get_active_sessions(active_evs, 0)
         self.session_ids = set(s.session_id for s in self.sessions)
-        self.internal_schedule = None
 
     def solve(self):
         if self.interface is None:
-            raise ValueError('Error: self.interface is None. Please register interface before calling solve.')
+            raise ValueError('Error: self.interface is None. Please register '
+                             'interface before calling solve.')
+        if self.sessions is None:
+            raise ValueError('No events registered. Please register an event'
+                             'queue before calling solve.')
         infrastructure = self.interface.infrastructure_info()
         self.sessions = enforce_pilot_limit(self.sessions, infrastructure)
         optimizer = AdaptiveChargingOptimization(self.objective,
