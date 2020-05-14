@@ -304,10 +304,17 @@ def total_energy(rates, infrastructure, interface, **kwargs):
 def peak(rates, infrastructure, interface, baseline_peak=0, **kwargs):
     agg_power = aggregate_power(rates, infrastructure)
     max_power = cp.max(agg_power)
+    prev_peak = interface.get_prev_peak() * infrastructure.voltages[0] / 1000
     if baseline_peak > 0:
-        return cp.maximum(max_power, baseline_peak)
+        return cp.maximum(max_power, baseline_peak, prev_peak)
     else:
-        return max_power
+        return cp.maximum(max_power, prev_peak)
+
+
+def demand_charge(rates, infrastructure, interface, baseline_peak=0, **kwargs):
+    p = peak(rates, infrastructure, interface, baseline_peak, **kwargs)
+    dc = interface.get_demand_charge()
+    return -dc * p
 
 
 def load_flattening(rates, infrastructure, interface, external_signal=None, **kwargs):
