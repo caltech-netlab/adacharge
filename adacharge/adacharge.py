@@ -2,11 +2,12 @@ from acnportal.algorithms import BaseAlgorithm, least_laxity_first
 from copy import deepcopy
 import warnings
 
-from adaptive_charging_optimization import *
+from .adaptive_charging_optimization import *
 from acnportal.algorithms import apply_upper_bound_estimate, \
     apply_minimum_charging_rate, enforce_pilot_limit
-from postprocessing import project_into_continuous_feasible_pilots, project_into_discrete_feasible_pilots
-from postprocessing import index_based_reallocation, diff_based_reallocation
+from .postprocessing import project_into_continuous_feasible_pilots, \
+    project_into_discrete_feasible_pilots
+from .postprocessing import index_based_reallocation, diff_based_reallocation
 
 # ---------------------------------------------------------
 #  These utilities translate from Interface format to
