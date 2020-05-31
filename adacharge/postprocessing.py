@@ -234,5 +234,4 @@ def diff_based_reallocation(rates: np.ndarray,
                 rounded_rates[:, 0] = new_rates
             else:
                 active[i] = False
-    print(f'Diff: {peak_limit - rounded_rates[:, 0].sum()}')
     return rounded_rates
