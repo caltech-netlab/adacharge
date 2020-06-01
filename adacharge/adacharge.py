@@ -1,150 +1,256 @@
-import numpy as np
-from acnportal.algorithms import BaseAlgorithm
-import cvxpy as cp
+from acnportal.algorithms import BaseAlgorithm, least_laxity_first
 from copy import deepcopy
+import warnings
 
-from .cvx_utils import *
+from .adaptive_charging_optimization import *
+from acnportal.algorithms import apply_upper_bound_estimate, \
+    apply_minimum_charging_rate, enforce_pilot_limit
+from .postprocessing import project_into_continuous_feasible_pilots, \
+    project_into_discrete_feasible_pilots
+from .postprocessing import index_based_reallocation, diff_based_reallocation
+
+# ---------------------------------------------------------
+#  These utilities translate from Interface format to
+#  InfrastructureInfo and SessionInfo formats. This will
+#  hopefully be incorporated into a new ACN-Sim Interface
+#  in a future release. For now we can use these functions
+#  for conversion.
+# ---------------------------------------------------------
 
 
-class AdaCharge(BaseAlgorithm):
-    def __init__(self, const_type=SOC, energy_equality=False, solver=None, max_recomp=None, offline=False, events=None):
+# def get_infrastructure_info(interface) -> InfrastructureInfo:
+#     """ Returns an InfrastructureInfo object generated from interface.
+#
+#     Args:
+#         interface: An Interface like object. See acnsim.
+#
+#     Returns:
+#         InfrastructureInfo: A description of the charging infrastructure.
+#     """
+#     def fn_to_list(fn, arg_order):
+#         return np.array([fn(arg) for arg in arg_order])
+#
+#     constraints = interface.get_constraints()
+#
+#     # If constraint_matrix of magnitudes is None, replace with empty array
+#     constraint_matrix = constraints.constraint_matrix if constraints.constraint_matrix is not None else np.array([])
+#     magnitudes = constraints.magnitudes if constraints.magnitudes is not None else np.array([])
+#
+#     # Interface gets values one at a time, populate arrays for each field.
+#     phases = fn_to_list(interface.evse_phase, constraints.station_ids)
+#     voltages = fn_to_list(interface.evse_voltage, constraints.station_ids)
+#     min_pilot_signals = fn_to_list(interface.min_pilot_signal, constraints.station_ids)
+#     max_pilot_signals = fn_to_list(interface.max_pilot_signal, constraints.station_ids)
+#     allowable_rates = np.array([interface.allowable_pilot_signals(station_id)[1] for station_id in constraints.station_ids])
+#     return InfrastructureInfo(constraint_matrix, magnitudes, phases, voltages,
+#                               constraints.constraint_index, constraints.station_ids,
+#                               max_pilot_signals, min_pilot_signals, allowable_rates)
+
+
+def get_active_sessions(active_evs, current_time):
+    """ Return a list of SessionInfo objects describing the currently charging EVs.
+
+    Args:
+        active_evs (List[acnsim.EV]: List of EV objects from acnsim.
+        current_time (int): Current time of the simulation.
+
+    Returns:
+        List[SessionInfo]: List of currently active charging sessions.
+    """
+    return [SessionInfo(ev.station_id, ev.session_id, ev.requested_energy, ev.energy_delivered, ev.arrival,
+                        ev.departure, current_time) for ev in active_evs]
+
+
+class AdaptiveSchedulingAlgorithm(BaseAlgorithm):
+    def __init__(self, objective, constraint_type='SOC',
+                 enforce_energy_equality=False, solver=None, peak_limit=None,
+                 estimate_max_rate=False, max_rate_estimator=None,
+                 uninterrupted_charging=False, quantize=False,
+                 reallocate=False, max_recompute=None,
+                 allow_overcharging=False):
+        """ Model Predictive Control based Adaptive Schedule Algorithm compatible with BaseAlgorithm.
+
+        Args:
+            objective (List[ObjectiveComponent]): List of ObjectiveComponents
+                for the optimization.
+            constraint_type (str): String representing which constraint type
+                to use. Options are 'SOC' for Second Order Cone or 'LINEAR'
+                for linearized constraints.
+            enforce_energy_equality (bool): If True, energy delivered must
+                be  equal to energy requested for each EV. If False, energy
+                delivered must be less than or equal to request.
+            solver (str): Backend solver to use. See CVXPY for available solvers.
+            peak_limit (Union[float, List[float], np.ndarray]): Limit on
+            aggregate peak current. If None, no limit is enforced.
+            rampdown (Rampdown): Rampdown object used to predict the maximum
+                charging rate of the EV's battery. If None, no ramp down is
+                applied.
+            minimum_charge (bool): If true EV should charge at least at the
+                minimum non-zero charging rate of the EVSE it is connected
+                to for the first control period.
+            quantize (bool): If true, apply project_into_discrete_feasible_pilots post-processing step.
+            reallocate (bool): If true, apply index_based_reallocation
+                post-processing step.
+            max_recompute (int): Maximum number of control periods between
+                optimization solves.
+            allow_overcharging (bool): Allow the algorithm to exceed the energy
+                request of the session by at most the energy delivered at the
+                minimum allowable rate for one period.
+        """
         super().__init__()
-        self.offline = offline
-        self.evs = []
-        self.internal_schedule = None
-        if self.offline:
-            self.max_recompute = 1
-            if events is None:
-                raise ValueError('Error. Argument evs is required when solving offline')
-            else:
-                for event in events._queue:
-                    if event[1].type == 'Plugin':
-                        self.evs.append(deepcopy(event[1].ev))
-        else:
-            self.max_recompute = max_recomp
-        self.const_type = const_type
-        self.energy_equality = energy_equality
+        self.objective = objective
+        self.constraint_type = constraint_type
+        self.enforce_energy_equality = enforce_energy_equality
         self.solver = solver
+        self.peak_limit = peak_limit
+        self.estimate_max_rate = estimate_max_rate
+        self.max_rate_estimator = max_rate_estimator
+        self.uninterrupted_charging = uninterrupted_charging
+        self.quantize = quantize
+        self.reallocate = reallocate
+        if not self.quantize and self.reallocate:
+            raise ValueError('reallocate cannot be true without quantize. '
+                             'Otherwise there is nothing to reallocate :).')
+        if self.quantize:
+            if self.max_recompute is not None:
+                warnings.warn('Overriding max_recompute to 1 '
+                              'since quantization is on.')
+            self.max_recompute = 1
+        else:
+            self.max_recompute = max_recompute
+        self.allow_overcharging = allow_overcharging
 
-    def obj(self, rates, active_evs):
-        max_t = max(ev.departure for ev in active_evs) + 1
-        c = np.array([(max_t - t)/max_t for t in range(max_t)])
-        return c*cp.sum(rates, axis=0) - (1e-6/max_t)*cp.sum_squares(rates)
+    def register_interface(self, interface):
+        """ Register interface to the _simulator/physical system.
 
-    def _build_problem(self, active_evs, offset_time):
-        if len(active_evs) == 0:
+        This interface is the only connection between the algorithm and what it
+            is controlling. Its purpose is to abstract the underlying
+            network so that the same algorithms can run on a simulated
+            environment or a physical one.
+
+        Args:
+            interface (Interface): An interface to the underlying network
+                whether simulated or real.
+
+        Returns:
+            None
+        """
+        self._interface = interface
+        if self.max_rate_estimator is not None:
+            self.max_rate_estimator.register_interface(interface)
+
+    def schedule(self, active_sessions):
+        """ See BaseAlgorithm """
+        if len(active_sessions) == 0:
             return {}
+        infrastructure = self.interface.infrastructure_info()
 
-        network_constraints = self.interface.get_constraints()
-        active_evses = set(ev.station_id for ev in active_evs)
-        evse_indexes = [evse_id for evse_id in network_constraints.evse_index if evse_id in active_evses]
-        for ev in active_evs:
-            ev.arrival = max(0, ev.arrival - offset_time)
-            ev.departure -= offset_time
-        max_t = max(ev.departure for ev in active_evs) + 1
+        active_sessions = enforce_pilot_limit(active_sessions,
+                                                   infrastructure)
 
-        rates = cp.Variable((len(evse_indexes), max_t), name='rates')
-        constraints = {}
-        max_rates = {ev.session_id: self.interface.max_pilot_signal(ev.station_id) for ev in active_evs}
-        constraints.update(rate_constraints(rates, active_evs, evse_indexes, max_rates))
+        if self.estimate_max_rate:
+            active_sessions = apply_upper_bound_estimate(self.max_rate_estimator,
+                                             active_sessions)
+        if self.uninterrupted_charging:
+            active_sessions = apply_minimum_charging_rate(active_sessions,
+                                                          infrastructure,
+                                                          self.interface)
 
-        remaining_demands = {ev.session_id: self.interface.remaining_amp_periods(ev) for ev in active_evs}
-        constraints.update(energy_constraints(rates, active_evs, evse_indexes, remaining_demands, self.energy_equality))
+        optimizer = AdaptiveChargingOptimization(self.objective,
+                                                 self.interface,
+                                                 self.constraint_type,
+                                                 self.enforce_energy_equality,
+                                                 solver=self.solver)
 
-        phases = {evse_id: self.interface.evse_phase(evse_id) for evse_id in evse_indexes}
-        constraints.update(infrastructure_constraints(rates, network_constraints, evse_indexes, self.const_type, phases))
+        rates_matrix = optimizer.solve(active_sessions,
+                                       infrastructure,
+                                       peak_limit=self.peak_limit,
+                                       prev_peak=self.interface.get_prev_peak())
+        if self.quantize:
+            if self.reallocate:
+                rates_matrix = diff_based_reallocation(rates_matrix,
+                                                       active_sessions,
+                                                       infrastructure,
+                                                       self.interface)
+            else:
+                rates_matrix = project_into_discrete_feasible_pilots(rates_matrix,
+                                                                     infrastructure)
+        else:
+            rates_matrix = project_into_continuous_feasible_pilots(rates_matrix,
+                                                                   infrastructure)
+        rates_matrix = np.maximum(rates_matrix, 0)
+        return {station_id: rates_matrix[i, :] for i, station_id
+                in enumerate(infrastructure.station_ids)}
 
-        objective = cp.Maximize(self.obj(rates, active_evs))
-        return cp.Problem(objective, list(constraints.values())), constraints, rates
 
-    def _solve(self, active_evs, offset_time, verbose=False, solver=None):
-        prob, constraints, rates = self._build_problem(active_evs, offset_time)
-        _ = prob.solve(verbose=verbose, solver=solver)
-        if prob.status in ["infeasible", "unbounded"]:
-            raise ValueError('Problem Infeasible.')
+class AdaptiveChargingAlgorithmOffline(BaseAlgorithm):
+    """ Offline optimization for objective with perfect future information.
 
-        active_evses = set(ev.station_id for ev in active_evs)
-        network_constraints = self.interface.get_constraints()
-        evse_indexes = [evse_id for evse_id in network_constraints.evse_index if evse_id in active_evses]
-        return {evse_id: np.clip(rates[j, :].value,
-                                 a_min=self.interface.min_pilot_signal(evse_id),
-                                 a_max=self.interface.max_pilot_signal(evse_id)) for j, evse_id in enumerate(evse_indexes)}
+    The offline optimization assumes ideal EVSEs and batteries. If non-ideal models are used the results are not
+    guaranteed to be optimal nor feasible.
+
+    Args:
+        objective (List[ObjectiveComponent]): List of ObjectiveComponents for the optimization.
+        constraint_type (str): String representing which constraint type to use. Options are 'SOC' for Second Order Cone
+            or 'LINEAR' for linearized constraints.
+        enforce_energy_equality (bool): If True, energy delivered must be equal to energy requested for each EV.
+            If False, energy delivered must be less than or equal to request.
+        solver (str): Backend solver to use. See CVXPY for available solvers.
+        peak_limit (Union[float, List[float], np.ndarray]): Limit on aggregate peak current. If None, no limit is
+            enforced.
+    """
+    def __init__(self, objective, constraint_type='SOC', enforce_energy_equality=False, solver=None,
+                 peak_limit=None):
+        super().__init__()
+        self.max_recompute = 1
+        self.objective = objective
+        self.constraint_type = constraint_type
+        self.enforce_energy_equality = enforce_energy_equality
+        self.solver = solver
+        self.peak_limit = peak_limit
+        self.sessions = None
+        self.session_ids = None
+        self.internal_schedule = None
+
+    def register_events(self, events):
+        """ Register events.
+
+        Args:
+            events (List[Event-like]): List of events which will occur.
+                Only Plugin events are considered.
+        """
+        active_evs = [deepcopy(event[1].ev) for event in events.queue
+                      if event[1].event_type == 'Plugin']
+        self.sessions = get_active_sessions(active_evs, 0)
+        self.session_ids = set(s.session_id for s in self.sessions)
+
+    def solve(self):
+        if self.interface is None:
+            raise ValueError('Error: self.interface is None. Please register '
+                             'interface before calling solve.')
+        if self.sessions is None:
+            raise ValueError('No events registered. Please register an event'
+                             'queue before calling solve.')
+        infrastructure = self.interface.infrastructure_info()
+        self.sessions = enforce_pilot_limit(self.sessions, infrastructure)
+        optimizer = AdaptiveChargingOptimization(self.objective,
+                                                 self.interface,
+                                                 self.constraint_type,
+                                                 self.enforce_energy_equality,
+                                                 solver=self.solver)
+        rates_matrix = optimizer.solve(self.sessions, infrastructure, self.peak_limit)
+        rates_matrix = project_into_continuous_feasible_pilots(rates_matrix, infrastructure)
+        self.internal_schedule = {station_id: rates_matrix[i, :]
+                                  for i, station_id in enumerate(infrastructure.station_ids)}
 
     def schedule(self, active_evs):
-        if self.offline:
-            if self.internal_schedule is None:
-                self.internal_schedule = self._solve(self.evs, 0, solver=self.solver)
-            t = self.interface.current_time
-            return {ev.station_id: [self.internal_schedule[ev.station_id][t]] for ev in active_evs}
-        else:
-            if len(active_evs) == 0:
-                return {}
-            else:
-                t = self.interface.current_time
-                return self._solve(active_evs, t, solver=self.solver)
-
-
-class AdaChargeProfitMax(AdaCharge):
-    def __init__(self, revenue, const_type=SOC, energy_equality=False, solver=None, max_recomp=None, get_dc=None,
-                 offline=False, events=None):
-        """
-
-        Args:
-            revenue: $/kWh
-            const_type: SOC or AFFINE
-            energy_equality: True of False
-            solver: any CVXPy solver
-            max_recomp: int
-            get_dc: function to get the demand charge proxy
-        """
-        super().__init__(const_type, energy_equality, solver, max_recomp, offline, events)
-        self.revenue = revenue
-        if get_dc is not None:
-            self.get_demand_charge = get_dc
-
-    @staticmethod
-    def get_demand_charge(iface):
-        return iface.get_demand_charge()
-
-    def obj(self, rates, active_evs):
-        # TODO(zach): Should account for EVSEs with different voltages
-        # We implicitly assume that energy_prices, scaled_revenue, and demand_charge should be scaled by voltage/1000.
-        max_t = max(ev.departure for ev in active_evs) + 1
-        voltage = self.interface.evse_voltage(active_evs[0].station_id)
-
-        energy_prices = np.array(self.interface.get_prices(max_t)) * (self.interface.period / 60) * voltage / 1000
-
-        scaled_revenue = self.revenue * (self.interface.period / 60) * voltage / 1000
-
-        demand_charge = self.get_demand_charge(self.interface) * voltage / 1000
-        schedule_peak = cp.max(cp.sum(rates, axis=0))
-        profit = scaled_revenue*cp.sum(rates) - energy_prices*cp.sum(rates, axis=0) - \
-                 demand_charge*cp.maximum(schedule_peak, self.interface.get_prev_peak())
-        return profit
-
-
-class AdaChargeLoadFlattening(AdaCharge):
-    def __init__(self, external_signal=None, const_type=SOC, energy_equality=True, solver=None, max_recomp=None,
-                 offline=False, events=None):
-        """
-
-        Args:
-            external_signal: np.ndarray of an external signal which we will attempt to flatten.
-                Should be at least as long as the simulation.
-            const_type: SOC or AFFINE
-            energy_equality: True of False
-            solver: any CVXPy solver
-            max_recomp: int
-        """
-        super().__init__(const_type, energy_equality, solver, max_recomp, offline, events)
-        self.external_signal = external_signal
-
-    def obj(self, rates, active_evs):
-        if self.external_signal is None:
-            return -cp.sum_squares(cp.sum(rates, axis=0))
-        else:
-            max_t = max(ev.departure for ev in active_evs) + 1
-            t = self.interface.current_time
-            voltage = self.interface.evse_voltage(active_evs[0].station_id)
-            return -cp.sum_squares(cp.sum(rates, axis=0) - self.external_signal[t: t + max_t] * 1000 / voltage)
+        """ See BaseAlgorithm """
+        if self.internal_schedule is None:
+            raise ValueError('No internal schedule found. Make sure to call solve before calling schedule or running'
+                             'a simulation.')
+        for ev in active_evs:
+            if ev.session_id not in self.session_ids:
+                raise ValueError(f'Error: Session {ev.session_id} not included in offline solve.')
+        current_time = self.interface.current_time
+        return {ev.station_id: [self.internal_schedule[ev.station_id][current_time]] for ev in active_evs}
 
