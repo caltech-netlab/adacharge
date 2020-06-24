@@ -1,6 +1,6 @@
 # adacharge
 
-This package is a set of linear optimization algorithms for EV
+This package is a set of optimization algorithms for EV
 charging using the model predictive control framework, with different
 objective functions. This package is meant to work in conjunction with
 acnportal.
