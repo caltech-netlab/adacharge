@@ -1,4 +1,4 @@
-Copyright 2019 California Institute of Technology
+Copyright © 2019-2020 California Institute of Technology
 
 Redistribution and use in source and binary forms for academic and
 other non-commercial purposes with or without modification, are
@@ -35,3 +35,15 @@ PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
 LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
 NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Nothing in this license may be interpreted as conferring by 
+implication, estoppel or otherwise, any license or rights 
+under any intellectual property rights of Caltech other than 
+as expressly and specifically set forth herein, regardless of 
+whether such other intellectual property rights are dominant 
+or subordinate to the software licensed herein.
+
+Copyright © 2019-2020 California Institute of Technology.
+Rights not explicitly granted herein are reserved by Caltech.
+
+
