@@ -9,43 +9,6 @@ from .postprocessing import project_into_continuous_feasible_pilots, \
     project_into_discrete_feasible_pilots
 from .postprocessing import index_based_reallocation, diff_based_reallocation
 
-# ---------------------------------------------------------
-#  These utilities translate from Interface format to
-#  InfrastructureInfo and SessionInfo formats. This will
-#  hopefully be incorporated into a new ACN-Sim Interface
-#  in a future release. For now we can use these functions
-#  for conversion.
-# ---------------------------------------------------------
-
-
-# def get_infrastructure_info(interface) -> InfrastructureInfo:
-#     """ Returns an InfrastructureInfo object generated from interface.
-#
-#     Args:
-#         interface: An Interface like object. See acnsim.
-#
-#     Returns:
-#         InfrastructureInfo: A description of the charging infrastructure.
-#     """
-#     def fn_to_list(fn, arg_order):
-#         return np.array([fn(arg) for arg in arg_order])
-#
-#     constraints = interface.get_constraints()
-#
-#     # If constraint_matrix of magnitudes is None, replace with empty array
-#     constraint_matrix = constraints.constraint_matrix if constraints.constraint_matrix is not None else np.array([])
-#     magnitudes = constraints.magnitudes if constraints.magnitudes is not None else np.array([])
-#
-#     # Interface gets values one at a time, populate arrays for each field.
-#     phases = fn_to_list(interface.evse_phase, constraints.station_ids)
-#     voltages = fn_to_list(interface.evse_voltage, constraints.station_ids)
-#     min_pilot_signals = fn_to_list(interface.min_pilot_signal, constraints.station_ids)
-#     max_pilot_signals = fn_to_list(interface.max_pilot_signal, constraints.station_ids)
-#     allowable_rates = np.array([interface.allowable_pilot_signals(station_id)[1] for station_id in constraints.station_ids])
-#     return InfrastructureInfo(constraint_matrix, magnitudes, phases, voltages,
-#                               constraints.constraint_index, constraints.station_ids,
-#                               max_pilot_signals, min_pilot_signals, allowable_rates)
-
 
 def get_active_sessions(active_evs, current_time):
     """ Return a list of SessionInfo objects describing the currently charging EVs.
