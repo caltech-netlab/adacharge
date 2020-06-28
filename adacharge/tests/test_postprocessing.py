@@ -1,7 +1,7 @@
 import numpy as np
 from unittest import TestCase
 from unittest.mock import Mock
-from postprocessing import *
+from adacharge.postprocessing import *
 # from testing_utilities import *
 from acnportal.algorithms.tests.generate_test_cases import \
     session_generator, single_phase_single_constraint, three_phase_balanced_network

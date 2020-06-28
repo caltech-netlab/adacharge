@@ -1,6 +1,6 @@
 from unittest import TestCase
 from unittest.mock import Mock
-from adaptive_charging_optimization import *
+from adacharge.adaptive_charging_optimization import *
 from acnportal.algorithms.tests.generate_test_cases import *
 from acnportal.algorithms.tests.testing_interface import TestingInterface
 import time

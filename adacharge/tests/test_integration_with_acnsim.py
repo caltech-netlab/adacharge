@@ -261,7 +261,9 @@ class TestAdaptiveChargingAlgorithmOfflineSingleEV(AdaptiveSchedulingAlgorithmBa
         events = acnsim.EventQueue([acnsim.PluginEvent(ev.arrival, ev)])
 
         quick_charge_obj = [ObjectiveComponent(quick_charge), ObjectiveComponent(equal_share, 1e-12)]
-        cls.alg = AdaptiveChargingAlgorithmOffline(quick_charge_obj, events, solver=cp.ECOS)
+        cls.alg = AdaptiveChargingAlgorithmOffline(quick_charge_obj,
+                                                   solver=cp.ECOS)
+        cls.alg.register_events(events)
         cls.sim = acnsim.Simulator(cn, cls.alg, events, start, period=period, verbose=False)
         cls.alg.solve()
         cls.sim.run()
@@ -297,8 +299,10 @@ class TestAdaptiveChargingAlgorithmOfflineCaltechSingleDay(AdaptiveSchedulingAlg
         cn = acnsim.network.sites.caltech_acn(basic_evse=basic_evse, voltage=voltage)
 
         quick_charge_obj = [ObjectiveComponent(quick_charge)]
-        cls.alg = AdaptiveChargingAlgorithmOffline(quick_charge_obj, events, solver=cp.MOSEK, enforce_energy_equality=True)
-
+        cls.alg = AdaptiveChargingAlgorithmOffline(quick_charge_obj,
+                                                   solver=cp.ECOS,
+                                                   enforce_energy_equality=True)
+        cls.alg.register_events(events)
         cls.sim = acnsim.Simulator(cn, cls.alg, events, start_time, period=period, verbose=False)
         cls.alg.solve()
         cls.sim.run()
