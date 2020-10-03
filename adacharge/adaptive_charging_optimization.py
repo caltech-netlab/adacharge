@@ -225,26 +225,6 @@ class AdaptiveChargingOptimization:
             raise InfeasibilityException(f'Solve failed with status {prob.status}')
         return problem_dict['variables']['rates'].value
 
-
-# Objective Functions
-
-"""
-Inputs: 
-    rates -> cp.Variable()
-    
-Sometime needed
-    infrastructure 
-    active_sessions
-    period
-    
-Signals -> signals_interface?
-    previous_rates
-    energy_tariffs 
-    demand_charge
-    external_demand
-    signal_to_follow
-"""
-
 # ---------------------------------------------------------------------------------
 #  Objective Functions
 #
