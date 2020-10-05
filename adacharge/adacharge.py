@@ -21,7 +21,7 @@ def get_active_sessions(active_evs, current_time):
         List[SessionInfo]: List of currently active charging sessions.
     """
     return [SessionInfo(ev.station_id, ev.session_id, ev.requested_energy, ev.energy_delivered, ev.arrival,
-                        ev.departure, current_time) for ev in active_evs]
+                        ev.departure, current_time=current_time) for ev in active_evs]
 
 
 class AdaptiveSchedulingAlgorithm(BaseAlgorithm):
@@ -117,7 +117,7 @@ class AdaptiveSchedulingAlgorithm(BaseAlgorithm):
         if self.uninterrupted_charging:
             active_sessions = apply_minimum_charging_rate(active_sessions,
                                                           infrastructure,
-                                                          self.interface)
+                                                          self.interface.period)
 
         optimizer = AdaptiveChargingOptimization(self.objective,
                                                  self.interface,

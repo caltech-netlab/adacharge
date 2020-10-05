@@ -1,11 +1,9 @@
 from unittest import TestCase
-import numpy as np
 from unittest.mock import Mock
 
 import pytz
 from datetime import datetime
 from acnportal import acnsim
-from acnportal.signals import tariffs
 from adacharge import *
 
 
@@ -54,6 +52,7 @@ class TestACASingleEV(AdaptiveSchedulingAlgorithmBase):
 
         cn = acnsim.ChargingNetwork()
         cn.register_evse(acnsim.get_evse_by_type('PS-1', 'BASIC'), voltage, 0)
+        cn.add_constraint(acnsim.Current("PS-1"), 100)
 
         batt = acnsim.Battery(100, 0, 7)
         ev = acnsim.EV(5, 5+12, 6.6, 'PS-1', 'test', batt)
@@ -255,6 +254,7 @@ class TestAdaptiveChargingAlgorithmOfflineSingleEV(AdaptiveSchedulingAlgorithmBa
 
         cn = acnsim.ChargingNetwork()
         cn.register_evse(acnsim.get_evse_by_type('PS-1', 'BASIC'), voltage, 0)
+        cn.add_constraint(acnsim.Current("PS-1"), 100)
 
         batt = acnsim.Battery(100, 0, 7)
         ev = acnsim.EV(5, 5+12, voltage*32/1000, 'PS-1', 'test', batt)
