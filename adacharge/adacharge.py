@@ -125,9 +125,16 @@ class AdaptiveSchedulingAlgorithm(BaseAlgorithm):
                                                  self.enforce_energy_equality,
                                                  solver=self.solver)
 
+        if np.isscalar(self.peak_limit):
+            trimmed_peak = self.peak_limit
+        else:
+            t = self.interface.current_time
+            optimization_horizon = max(s.arrival_offset + s.remaining_time for s in active_sessions)
+            trimmed_peak = self.peak_limit[t: t + optimization_horizon]
+        
         rates_matrix = optimizer.solve(active_sessions,
                                        infrastructure,
-                                       peak_limit=self.peak_limit,
+                                       peak_limit=trimmed_peak,
                                        prev_peak=self.interface.get_prev_peak())
         if self.quantize:
             if self.reallocate:
