@@ -125,7 +125,7 @@ class AdaptiveSchedulingAlgorithm(BaseAlgorithm):
                                                  self.enforce_energy_equality,
                                                  solver=self.solver)
 
-        if np.isscalar(self.peak_limit):
+        if self.peak_limit is None or np.isscalar(self.peak_limit):
             trimmed_peak = self.peak_limit
         else:
             t = self.interface.current_time
