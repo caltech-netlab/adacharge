@@ -10,8 +10,9 @@ class InfeasibilityException(Exception):
 
 
 ObjectiveComponent = namedtuple(
-    "ObjectiveComponent", ["function", "coefficient", "kwargs"], defaults=[1, {}]
+    "ObjectiveComponent", ["function", "coefficient", "kwargs"]
 )
+ObjectiveComponent.__new__.__defaults__ = (1, {})
 
 
 class AdaptiveChargingOptimization:
