@@ -30,7 +30,7 @@ class AdaptiveSchedulingAlgorithm(BaseAlgorithm):
                  estimate_max_rate=False, max_rate_estimator=None,
                  uninterrupted_charging=False, quantize=False,
                  reallocate=False, max_recompute=None,
-                 allow_overcharging=False):
+                 allow_overcharging=False, verbose=False):
         """ Model Predictive Control based Adaptive Schedule Algorithm compatible with BaseAlgorithm.
 
         Args:
@@ -59,6 +59,7 @@ class AdaptiveSchedulingAlgorithm(BaseAlgorithm):
             allow_overcharging (bool): Allow the algorithm to exceed the energy
                 request of the session by at most the energy delivered at the
                 minimum allowable rate for one period.
+            verbose (bool): Solve with verbose logging. Helpful for debugging. 
         """
         super().__init__()
         self.objective = objective
@@ -71,6 +72,7 @@ class AdaptiveSchedulingAlgorithm(BaseAlgorithm):
         self.uninterrupted_charging = uninterrupted_charging
         self.quantize = quantize
         self.reallocate = reallocate
+        self.verbose = verbose
         if not self.quantize and self.reallocate:
             raise ValueError('reallocate cannot be true without quantize. '
                              'Otherwise there is nothing to reallocate :).')
@@ -135,7 +137,8 @@ class AdaptiveSchedulingAlgorithm(BaseAlgorithm):
         rates_matrix = optimizer.solve(active_sessions,
                                        infrastructure,
                                        peak_limit=trimmed_peak,
-                                       prev_peak=self.interface.get_prev_peak())
+                                       prev_peak=self.interface.get_prev_peak(),
+                                       verbose=self.verbose)
         if self.quantize:
             if self.reallocate:
                 rates_matrix = diff_based_reallocation(rates_matrix,
@@ -170,7 +173,7 @@ class AdaptiveChargingAlgorithmOffline(BaseAlgorithm):
             enforced.
     """
     def __init__(self, objective, constraint_type='SOC', enforce_energy_equality=False, solver=None,
-                 peak_limit=None):
+                 peak_limit=None, verbose=False):
         super().__init__()
         self.max_recompute = 1
         self.objective = objective
@@ -178,6 +181,7 @@ class AdaptiveChargingAlgorithmOffline(BaseAlgorithm):
         self.enforce_energy_equality = enforce_energy_equality
         self.solver = solver
         self.peak_limit = peak_limit
+        self.verbose = verbose
         self.sessions = None
         self.session_ids = None
         self.internal_schedule = None
@@ -208,7 +212,7 @@ class AdaptiveChargingAlgorithmOffline(BaseAlgorithm):
                                                  self.constraint_type,
                                                  self.enforce_energy_equality,
                                                  solver=self.solver)
-        rates_matrix = optimizer.solve(self.sessions, infrastructure, self.peak_limit)
+        rates_matrix = optimizer.solve(self.sessions, infrastructure, self.peak_limit, verbose=self.verbose)
         rates_matrix = project_into_continuous_feasible_pilots(rates_matrix, infrastructure)
         self.internal_schedule = {station_id: rates_matrix[i, :]
                                   for i, station_id in enumerate(infrastructure.station_ids)}
