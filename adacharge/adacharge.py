@@ -266,7 +266,7 @@ class AdaptiveChargingAlgorithmOffline(BaseAlgorithm):
             self.enforce_energy_equality,
             solver=self.solver,
         )
-        rates_matrix = optimizer.solve(self.sessions, infrastructure, self.peak_limit)
+        rates_matrix = optimizer.solve(self.sessions, infrastructure, self.peak_limit, verbose=self.verbose)
         rates_matrix = project_into_continuous_feasible_pilots(
             rates_matrix, infrastructure
         )
