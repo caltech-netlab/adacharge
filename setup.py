@@ -21,5 +21,5 @@ setuptools.setup(
         "License :: OSI Approved :: BSD License",
         "Operating System :: OS Independent",
     ],
-    install_requires=["numpy", "cvxpy", "acnportal", "pytz"],
+    install_requires=["acnportal", "cvxpy", "numpy", "pytz"],
 )
