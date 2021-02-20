@@ -54,6 +54,7 @@ class AdaptiveSchedulingAlgorithm(BaseAlgorithm):
         reallocate=False,
         max_recompute=None,
         allow_overcharging=False,
+        verbose=False
     ):
         """Model Predictive Control based Adaptive Schedule Algorithm compatible with BaseAlgorithm.
 
@@ -83,6 +84,7 @@ class AdaptiveSchedulingAlgorithm(BaseAlgorithm):
             allow_overcharging (bool): Allow the algorithm to exceed the energy
                 request of the session by at most the energy delivered at the
                 minimum allowable rate for one period.
+            verbose (bool): Solve with verbose logging. Helpful for debugging.
         """
         super().__init__()
         self.objective = objective
@@ -95,6 +97,7 @@ class AdaptiveSchedulingAlgorithm(BaseAlgorithm):
         self.uninterrupted_charging = uninterrupted_charging
         self.quantize = quantize
         self.reallocate = reallocate
+        self.verbose = verbose
         if not self.quantize and self.reallocate:
             raise ValueError(
                 "reallocate cannot be true without quantize. "
@@ -168,6 +171,7 @@ class AdaptiveSchedulingAlgorithm(BaseAlgorithm):
             infrastructure,
             peak_limit=trimmed_peak,
             prev_peak=self.interface.get_prev_peak(),
+            verbose=self.verbose
         )
         if self.quantize:
             if self.reallocate:
@@ -213,6 +217,7 @@ class AdaptiveChargingAlgorithmOffline(BaseAlgorithm):
         enforce_energy_equality=False,
         solver=None,
         peak_limit=None,
+        verbose=False,
     ):
         super().__init__()
         self.max_recompute = 1
@@ -221,6 +226,7 @@ class AdaptiveChargingAlgorithmOffline(BaseAlgorithm):
         self.enforce_energy_equality = enforce_energy_equality
         self.solver = solver
         self.peak_limit = peak_limit
+        self.verbose = verbose
         self.sessions = None
         self.session_ids = None
         self.internal_schedule = None
