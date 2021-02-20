@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="adacharge",
-    version="0.0.1",
+    version="0.1.0",
     author="Zachary Lee",
     author_email="zlee@caltech.edu",
     url="https://github.com/zach401/AdaCharge",
